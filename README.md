@@ -9,13 +9,14 @@ sudo apt install -y libopencv-dev
 
 ## Install E2VID (Reference / Manual Setup) [Optional]
 
-> [!NOTE] **Automated Installation**
+> [!IMPORTANT]
+> **Automated Installation**
 >
 > E2VID is included in this repository as a git submodule (`rpg_e2vid/`), pointing to a [fork](https://github.com/patrickhln/rpg_e2vid/tree/cpu-support) of [E2VID](https://github.com/uzh-rpg/rpg_e2vid).
 >
 > The steps below are handled **automatically** by `scripts/install_e2vid_env.sh` and **not required** for normal usage.
 >
->The instructions here are provided primarily for reference and to document the underlying process.
+> The instructions here are provided primarily for reference and to document the underlying process.
 
 The installation requires [Anaconda3](https://www.anaconda.com/download).
 Minor adjustments were made to the code and installation requirements compared to the [original README](https://github.com/uzh-rpg/rpg_e2vid/blob/master/README.md) to ensure CPU compatibility.

@@ -15,17 +15,19 @@
 #include <dv-processing/io/stereo_camera_writer.hpp>
 #include <dv-processing/visualization/event_visualizer.hpp>
 #include <dv-processing/io/stereo_camera_recording.hpp>
+#include <dv-processing/io/data_read_handler.hpp>
 
 #include <opencv2/highgui.hpp>
+
 #include "Log.h"
 
 void logUsage(char* argv[]);
 
-static std::atomic<bool> stopSignalDetection(false);
+static std::atomic<bool> stopSignalDetected(false);
 
 static void signalHandler(int)
 {
-	stopSignalDetection.store(true);
+	stopSignalDetected.store(true);
 }
 
 struct StereoBatch {
@@ -108,99 +110,71 @@ int record(const std::filesystem::path &path, bool showVisualization)
 	std::condition_variable visQueueCondition;
 
 	StereoBatch latest;
-	bool hasLatest = false;
-	// std::atomic allows thread-safe reads/writes without a mutex.
-	// Multiple threads can safely increment this counter simultaneously.
-	std::atomic<uint64_t> droppedVisFrames{0};
+	
+	size_t droppedVisFrames = 0;
+
+	// Example for usage of the DataReadHandler Class:
+	// https://gitlab.com/inivation/dv/dv-processing/-/blob/master/samples/io/stereo-live-writer/stereo-live-writer.cpp#L26
+	dv::io::DataReadHandler leftHandler, rightHandler;
+
+	leftHandler.mEventHandler = [&](const dv::EventStore &events) 
+	{
+		// Priority 1: write events
+		writer.left.writeEvents(events);	
+
+		// Priority 2: send events to visualization thread 
+		if (showVisualization)
+		{
+			auto leftEventPrt = std::make_shared<dv::EventStore>(events);		
+			{
+				std::scoped_lock<std::mutex> lock(queueMutex);
+				
+				if (latest.left != nullptr) droppedVisFrames++;
+				latest.left = std::move(leftEventPrt);
+			}
+			visQueueCondition.notify_one();
+		}
+	};
+	rightHandler.mEventHandler = [&](const dv::EventStore &events) 
+	{
+		writer.right.writeEvents(events);	
+
+		if (showVisualization)
+		{
+			auto rightEventPrt = std::make_shared<dv::EventStore>(events);		
+			{
+				std::scoped_lock<std::mutex> lock(queueMutex);
+				
+				if (latest.right != nullptr) droppedVisFrames++;
+				latest.right = std::move(rightEventPrt);
+			}
+			visQueueCondition.notify_one();
+		}
+	};
+
 
 	// producer thread (worker)
 	std::thread recordingThread([&]() {
 
 		Log::info("Starting the recording!");	
-		while (!stopSignalDetection.load() && leftCamera->isRunning() && rightCamera->isRunning())
+		while (!stopSignalDetected.load() && leftCamera->isRunning() && rightCamera->isRunning())
 		{
 			// For each of the available streams try readin a packet and write
 			// immediately to a file	
-			if (leftCamera->isEventStreamAvailable() && rightCamera->isEventStreamAvailable())
-			{
-				// consider add logto this worker ever ~10seconds to keep track of dropped frames etc
-				auto leftEvents = leftCamera->getNextEventBatch();
-				auto rightEvents = rightCamera->getNextEventBatch();
 
-				if (leftEvents.has_value() && rightEvents.has_value())
-				{
-					// Write directly to file first (highest priority)
-					writer.left.writeEvents(*leftEvents); 
-					writer.right.writeEvents(*rightEvents);
-
-					// producer: update visualization queue
-					if (showVisualization) 
-					{
-						// Create shared_ptr outside lock to minimize critical section
-						auto lPtr = std::make_shared<dv::EventStore>(std::move(*leftEvents)); 
-						auto rPtr = std::make_shared<dv::EventStore>(std::move(*rightEvents));
-
-						{
-							std::scoped_lock<std::mutex> lock(queueMutex);
-							if (hasLatest) {
-								// fetch_add atomically adds 1 and returns old value (like counter++)
-								// memory_order_relaxed = fastest option, no synchronization guarantees
-								// with other variables. Fine here since we only care about the count.
-								droppedVisFrames.fetch_add(1, std::memory_order_relaxed);
-							}
-							latest = {std::move(lPtr), std::move(rPtr)};
-							hasLatest = true;
-						}
-						// notify the consumer thread that new data is available
-						visQueueCondition.notify_one();
-					}
-				}
-				else
-				{
-					// No events available, yield CPU briefly
-					// alternative: std::this_thread::sleep_for(1ms);
-					std::this_thread::yield();
-				}
-			} else 
+			if (!leftCamera->handleNext(leftHandler)) 
 			{
-            	// If we didn't do work this cycle, sleep briefly to yield CPU.
-	        	std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				break;
 			}
-			if (leftCamera->isFrameStreamAvailable() && rightCamera->isFrameStreamAvailable())
+			if (!rightCamera->handleNext(rightHandler)) 
 			{
-				const auto &leftFrame = leftCamera->getNextFrame();
-				const auto &rightFrame = rightCamera->getNextFrame();
-				if (leftFrame.has_value() && rightFrame.has_value())
-				{
-					writer.left.writeFrame(*leftFrame); 
-					writer.right.writeFrame(*rightFrame);
-				}
-			}
-			if (leftCamera->isImuStreamAvailable() && rightCamera->isImuStreamAvailable())
-			{
-				const auto &leftImu = leftCamera->getNextImuBatch();
-				const auto &rightImu = rightCamera->getNextImuBatch();
-				if (leftImu.has_value() && rightImu.has_value())
-				{
-					writer.left.writeImuPacket(*leftImu); 
-					writer.right.writeImuPacket(*rightImu);
-				}
-			}
-			if (leftCamera->isTriggerStreamAvailable() && rightCamera->isTriggerStreamAvailable())
-			{
-				const auto &leftTriggers = leftCamera->getNextTriggerBatch();
-				const auto &rightTriggers = rightCamera->getNextTriggerBatch();
-				if (leftTriggers.has_value() && rightTriggers.has_value())
-				{
-					writer.left.writeTriggerPacket(*leftTriggers); 
-					writer.right.writeTriggerPacket(*rightTriggers);
-				}
+				break;
 			}
 		}
 		// when recording finished, wake up consumer thread
 		visQueueCondition.notify_all();
 		if (showVisualization) {
-			Log::info("Visualization frames dropped: ", droppedVisFrames.load(std::memory_order_relaxed));
+			Log::info("Visualization frames dropped: ", droppedVisFrames);
 		}
         Log::info("Recording Thread Finished");
 	});
@@ -229,7 +203,7 @@ int record(const std::filesystem::path &path, bool showVisualization)
 				// Signal exit if ESC or "q" key is pressed
 				char key = (char) cv::waitKey(1);
 				if (key == 27 || key == 'q'){
-					stopSignalDetection.store(true);
+					stopSignalDetected.store(true);
 				}
 			}
 	});
@@ -237,38 +211,26 @@ int record(const std::filesystem::path &path, bool showVisualization)
 	if (showVisualization)
 	{
 		// consumer
-		while(!stopSignalDetection.load()) {
+		while(!stopSignalDetected.load()) {
 			StereoBatch batch;
 			// use unique lock instead of scoped lock for dynamic locking and
 			{
 				std::unique_lock<std::mutex> lock(queueMutex);
 
-
-				// // Wait for data OR timeout after 50ms to keep UI responsive
-				// bool success = visQueueCondition.wait_for(lock, std::chrono::milliseconds(50), [&]{
-				// 	return stopSignalDetection.load() || hasLatest;
-				// });
-
-				// if (stopSignalDetection.load() && !hasLatest) 
-				// 	break;
-
-				// if (success) {
-				// 	batch = std::move(latest);
-				// 	hasLatest = false;
-				// }
-
-				visQueueCondition.wait(lock, [&]{
-					return stopSignalDetection.load() || hasLatest;
+				visQueueCondition.wait_for(lock, std::chrono::milliseconds(50), [&]{
+					// wait until we have top signal or full stereo pair
+					return stopSignalDetected.load() || (latest.left && latest.right);
 				});
 
-				if (stopSignalDetection.load() && !hasLatest) 
+				if (stopSignalDetected.load()) 
 					break;
 
-				batch = std::move(latest);
+				if (latest.left && latest.right) {
+					batch = std::move(latest);
+					// latest is now {nullptr, nullptr}, ready for new data
+				}
 				// unlock here so that the producer thread can push new data
 				// while slicer is processing
-				
-				hasLatest = false;
 
 			}
 			if (batch.left && batch.right) {
@@ -283,7 +245,7 @@ int record(const std::filesystem::path &path, bool showVisualization)
 	} 
 
 	// Ensure worker thread stops
-    stopSignalDetection.store(true);
+    stopSignalDetected.store(true);
 	visQueueCondition.notify_all();
     
     if (recordingThread.joinable())
@@ -300,7 +262,7 @@ int record(const std::filesystem::path &path, bool showVisualization)
 
 int environment_installed()
 {
-	// TODO change the way the path is handled here (maybe using make install
+	// TODO: change the way the path is handled here (maybe using make install
 	// later)
 	int result = system(SCRIPTS_DIR "check_env.sh");	
 	int exit_code = 0;
@@ -334,11 +296,11 @@ int convertAedat4ToTxt(const std::filesystem::path& inputAedat4, const std::stri
 		std::ofstream leftOutFile;
 		leftOutFile.open("leftEvents.txt");
 		leftOutFile << 640 << " " << 480 << "\n";
-		// TODO which recording?!
+		// TODO: which recording?!
 		Log::info("Converting .aedat4 recording to .txt in preperation for E2VID:");
 		Log::info("Processing left events...");
-		uint16_t rightLineCount = 0;
-		uint16_t leftLineCount = 0;
+		size_t rightLineCount = 0;
+		size_t leftLineCount = 0;
 		while (true) {
 			auto leftEvents = recording.getLeftReader().getNextEventBatch();
 			// dv::EventStore sliced;
