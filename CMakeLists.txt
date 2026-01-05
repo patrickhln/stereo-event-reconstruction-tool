@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(CalibrationTool)
+project(sert)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
 # put .so objects next to binary
@@ -10,13 +10,17 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(SOURCE_FILES
 	src/cpp/Main.cpp
+	src/cpp/Recorder.cpp
+	src/cpp/FrameGenerator.cpp
+	src/cpp/Calibrator.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-SCRIPTS_DIR="${CMAKE_SOURCE_DIR}/scripts/")
-
+SCRIPTS_DIR="${CMAKE_SOURCE_DIR}/scripts/"
+PROJECT_ROOT_DIR="${CMAKE_SOURCE_DIR}"
+)
 
 # Third Party Libraries
 find_package(OpenCV REQUIRED)

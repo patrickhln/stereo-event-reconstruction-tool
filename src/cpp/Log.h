@@ -30,7 +30,7 @@ class Log
 		{
 			if (LogLevel::WARN >= GLOBAL_LOG_LEVEL)
 			{
-				std::cout << "[INFO]  | ";
+				std::cout << "[WARN]  | ";
 				((std::cout << args),...);
 				std::cout << std::endl;
 			}
@@ -41,9 +41,9 @@ class Log
 		{
 			if (LogLevel::ERROR >= GLOBAL_LOG_LEVEL)
 			{
-				std::cout << "[INFO]  | ";
-				((std::cout << args),...);
-				std::cout << std::endl;
+				std::cerr << "[ERROR] | ";
+				((std::cerr << args),...);
+				std::cerr << std::endl;
 			}
 		}
 };
