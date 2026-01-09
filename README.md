@@ -23,6 +23,12 @@ sudo apt install -y libopencv-dev
 ```
 Creates `./data/session_YYYY-MM-DD_HH-MM-SS/`.
 
+**Rendering (Events → Frames)**
+```bash
+./sert render -s ./data/session_YYYY-MM-DD_HH-MM-SS
+```
+Uses the `sert-python` conda environment to run E2VID.
+
 **Calibration**
 ```bash
 ./sert calibrate -s ./data/session_YYYY-MM-DD_HH-MM-SS
@@ -32,20 +38,32 @@ Creates `./data/session_YYYY-MM-DD_HH-MM-SS/`.
 
 ```text
 session_YYYY-MM-DD_HH-MM-SS/
+├── config/
+│   ├── checkerboard.yaml             # Calibration target (user edits)
+│   ├── esvo_stereo.yaml              # Auto-generated from Kalibr
+│   └── esvo_custom.launch            # Auto-generated ROS launch file
 ├── raw/
-│   ├── stereo_recording.aedat4   # Raw event data
-│   └── camera_metadata.txt       # Camera info (left and right)
+│   ├── stereo_recording.aedat4       # Raw event data
+│   └── camera_metadata.txt           # Camera info (left and right)
 ├── intermediate/
-│   ├── leftEvents.txt            # E2VID input
-│   └── rightEvents.txt           # E2VID input
-└── reconstruction/
-    ├── left/                     # Output frames
-    └── right/                    # Output frames
+│   ├── leftEvents.txt                # E2VID input
+│   ├── rightEvents.txt               # E2VID input
+│   ├── stereo_frames.bag             # ROS bag for Kalibr
+│   └── scene_events.bag              # ROS bag for ESVO
+├── reconstruction/
+│   ├── left/                         # E2VID output frames
+│   └── right/                        # E2VID output frames
+├── calibration/
+│   ├── camchain-stereo_frames.yaml   # Kalibr output (intrinsics + extrinsics)
+│   └── report-stereo_frames.pdf      # Kalibr calibration report
+└── esvo/
+    ├── trajectory.txt                # Estimated camera poses
+    └── pointcloud.pcd                # 3D reconstruction result
 ```
 
 **View the created Frames**
 ```bash
-ffplay -framerate 30 -pattern_type glob -i 'build/Debug/session/reconstruction/{left/right}/*.png'
+ffplay -framerate 20 -pattern_type glob -i '<session>/reconstruction/{left/right}/*.png'
 ```
 
 # Install E2VID (Reference / Manual Setup) [Optional]
@@ -55,7 +73,7 @@ ffplay -framerate 30 -pattern_type glob -i 'build/Debug/session/reconstruction/{
 >
 > E2VID is included in this repository as a git submodule (`rpg_e2vid/`), pointing to a [fork](https://github.com/patrickhln/rpg_e2vid/tree/cpu-support) of [E2VID](https://github.com/uzh-rpg/rpg_e2vid).
 >
-> The steps below are handled **automatically** by `scripts/install_e2vid_env.sh` and **not required** for normal usage.
+> The steps below are handled **automatically** by `scripts/install_python_env.sh` (which sets up the E2VID environment) and **not required** for normal usage.
 >
 > The instructions here are provided primarily for reference and to document the underlying process.
 
