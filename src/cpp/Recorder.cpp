@@ -95,7 +95,9 @@ namespace StereoRecorder
 
 		std::mutex queueMutex;
 		std::condition_variable visQueueCondition;
-		StereoBatch latest;
+		std::deque<std::shared_ptr<const dv::EventStore>> leftQueue;
+		std::deque<std::shared_ptr<const dv::EventStore>> rightQueue;
+		const size_t MAX_QUEUE_SIZE = 5;
 		size_t droppedVisFrames = 0;
 
 		// Example for usage of the DataReadHandler Class:
@@ -112,12 +114,16 @@ namespace StereoRecorder
 			// Priority 2: send events to visualization thread 
 			if (showVisualization)
 			{
-				auto leftEventPrt = std::make_shared<dv::EventStore>(events);		
+				auto leftEventPtr = std::make_shared<dv::EventStore>(events);		
 				{
 					std::scoped_lock<std::mutex> lock(queueMutex);
 					
-					if (latest.left != nullptr) droppedVisFrames++;
-					latest.left = std::move(leftEventPrt);
+					if (leftQueue.size() >= MAX_QUEUE_SIZE)
+					{
+						droppedVisFrames++;
+						leftQueue.pop_front();
+					}
+					leftQueue.push_back(std::move(leftEventPtr));
 				}
 				visQueueCondition.notify_one();
 			}
@@ -128,12 +134,16 @@ namespace StereoRecorder
 
 			if (showVisualization)
 			{
-				auto rightEventPrt = std::make_shared<dv::EventStore>(events);		
+				auto rightEventPtr = std::make_shared<dv::EventStore>(events);		
 				{
 					std::scoped_lock<std::mutex> lock(queueMutex);
 					
-					if (latest.right != nullptr) droppedVisFrames++;
-					latest.right = std::move(rightEventPrt);
+					if (rightQueue.size() >= MAX_QUEUE_SIZE)
+					{
+						droppedVisFrames++;
+						rightQueue.pop_front();
+					}
+					rightQueue.push_back(std::move(rightEventPtr));
 				}
 				visQueueCondition.notify_one();
 			}
@@ -189,14 +199,15 @@ namespace StereoRecorder
 
 					visQueueCondition.wait_for(lock, std::chrono::milliseconds(50), [&]{
 						// wait until we have stop signal or full stereo pair
-						return stopSignal.load() || (latest.left && latest.right);
+						return stopSignal.load() || (!leftQueue.empty() && !rightQueue.empty());
 					});
 
 					if (stopSignal.load()) break;
 
-					if (latest.left && latest.right) 
+					if (!leftQueue.empty() && !rightQueue.empty()) 
 					{
-						batch = std::move(latest);
+						batch.left = leftQueue.front(); leftQueue.pop_front();
+						batch.right = rightQueue.front(); rightQueue.pop_front();
 						// latest is now {nullptr, nullptr}, ready for new data
 					}
 					// unlock here so that the producer thread can push new data
