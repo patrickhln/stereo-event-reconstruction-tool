@@ -62,13 +62,13 @@ else
 fi
 
 if [[ "$INSTALL_TYPE" == "cuda" ]]; then
-    echo "NVIDIA GPU found -> installing PyTorch with CUDA 10.0"
-    conda install -y pytorch torchvision cudatoolkit=10.0 -c pytorch
+    echo "NVIDIA GPU found -> installing PyTorch with CUDA 12.1"
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
     E2VID_BRANCH="master"
 elif [[ "$INSTALL_TYPE" == "xpu" ]]; then
     echo "Intel GPU detected, but XPU support has complex dependencies"
     echo "Falling back to CPU-only installation"
-    conda install -y pytorch torchvision cpuonly -c pytorch
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
     E2VID_BRANCH="cpu-support"
 else
     echo "No NVIDIA GPU found (or lspci missing) -> installing CPU-only PyTorch"

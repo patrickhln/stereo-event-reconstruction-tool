@@ -4,14 +4,17 @@
 
 ENV_NAME="sert-python"
 
-# standard conda installation path
-CONDA_PATH="$HOME/anaconda3/etc/profile.d/conda.sh"
+# Try multiple conda paths
+for path in "$HOME/anaconda3" "$HOME/miniconda3" "$HOME/.conda" "/opt/conda"; do
+    if [ -f "$path/etc/profile.d/conda.sh" ]; then
+        source "$path/etc/profile.d/conda.sh"
+        break
+    fi
+done
 
-if [ -f "$CONDA_PATH" ]; then
-    source "$CONDA_PATH"
-else
-    # Fallback: try sourcing bashrc if the specific conda file isn't found
-    source "$HOME/.bashrc"
+# Fallback
+if ! command -v conda &> /dev/null; then
+    source "$HOME/.bashrc" 2>/dev/null || true
 fi
 
 # 2. Check if conda is available now

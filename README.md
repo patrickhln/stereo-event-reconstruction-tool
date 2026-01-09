@@ -1,7 +1,16 @@
-# Prerequisites
+# SERT - Stereo Event Reconstruction Tool
 
+**Tested on:** Ubuntu 24.04 LTS
 
-**DV-Processing**
+# Installation
+
+## 1. System Dependencies
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake git wget pciutils ffmpeg
+```
+
+## 2. DV-Processing
 ```bash
 sudo add-apt-repository ppa:ubuntu-toolchain-r/test
 sudo add-apt-repository ppa:inivation-ppa/inivation
@@ -13,6 +22,29 @@ Please refer to the official docs for other platforms: (https://dv-processing.in
 **OpenCV** 
 ```bash
 sudo apt install -y libopencv-dev
+```
+
+## 3. Build SERT
+```bash
+git clone --recursive <repo-url>
+cd stereo-event-reconstruction-tool
+mkdir -p build && cd build
+cmake .. && make -j$(nproc)
+```
+
+## 4. Python Environment (for E2VID)
+Install [Anaconda](https://www.anaconda.com/download) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html), then:
+```bash
+cd scripts
+./install_python_env.sh
+```
+
+## 5. Docker (for Kalibr/ESVO)
+```bash
+sudo apt install -y docker.io
+sudo usermod -aG docker $USER  # Log out and back in after this
+cd scripts
+./docker_build.sh  # Takes 20-40 min
 ```
 
 # Usage
@@ -97,14 +129,14 @@ conda install -y -c conda-forge pandas scipy opencv protobuf libprotobuf absl-py
 Since E2VID uses `np.int` which was deprecated in 1.20 and removed in 1.24 we
 need to set numpy version explicitly
 
-Now, for the pytorch installation, choose cpu only or cuda if available
+Now, for the pytorch installation, choose based on your hardware:
 
 ```bash
-conda install pytorch torchvision cudatoolkit=10.0 -c pytorch
-```
-or 
-```bash
-conda install pytorch torchvision cpuonly -c pytorch
+# NVIDIA GPU (CUDA 12.1)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# CPU only
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ## 3. Download model
