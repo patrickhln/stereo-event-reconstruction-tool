@@ -26,10 +26,11 @@ sudo apt install -y libopencv-dev
 
 ## 3. Build SERT
 ```bash
-git clone --recursive <repo-url>
+git clone --recursive git@github.com:patrickhln/stereo-event-reconstruction-tool.git
 cd stereo-event-reconstruction-tool
-mkdir -p build && cd build
-cmake .. && make -j$(nproc)
+mkdir -p build 
+cmake -S . -B build/ -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
 ```
 
 ## 4. Python Environment (for E2VID)
@@ -44,7 +45,7 @@ cd scripts
 sudo apt install -y docker.io
 sudo usermod -aG docker $USER  # Log out and back in after this
 cd scripts
-./docker_build.sh  # Takes 20-40 min
+./docker_build.sh  # This might take a while! (~20min) 
 ```
 
 # Usage

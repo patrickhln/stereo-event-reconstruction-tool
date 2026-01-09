@@ -250,6 +250,6 @@ void logUsage(char* argv[])
         "esvo Options:\n",
         "  -s, --session <dir>   (Required) Path to the session folder (outputs to /esvo/)\n\n",
 
-		"For more information about the session structure, take a look at https://github.com/patrickhln/event-stereo-reconstruction README.md\n"
+		"For more information about the session structure, take a look at https://github.com/patrickhln/stereo-event-reconstruction-tool README.md\n"
     );
 }

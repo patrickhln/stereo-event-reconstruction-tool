@@ -35,7 +35,7 @@ fi
 
 echo "Creating sert-python environment..."
 
-conda create -y -n sert-python python=3.8
+conda create -y -n sert-python python=3.10
 conda activate sert-python
 
 echo "Installing E2VID dependencies..."
@@ -62,17 +62,17 @@ else
 fi
 
 if [[ "$INSTALL_TYPE" == "cuda" ]]; then
-    echo "NVIDIA GPU found -> installing PyTorch with CUDA 12.1"
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+    echo "NVIDIA GPU found -> installing PyTorch with CUDA"
+    pip install torch torchvision
     E2VID_BRANCH="master"
 elif [[ "$INSTALL_TYPE" == "xpu" ]]; then
     echo "Intel GPU detected, but XPU support has complex dependencies"
     echo "Falling back to CPU-only installation"
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+	pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
     E2VID_BRANCH="cpu-support"
 else
     echo "No NVIDIA GPU found (or lspci missing) -> installing CPU-only PyTorch"
-    conda install -y pytorch torchvision cpuonly -c pytorch
+	pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
     E2VID_BRANCH="cpu-support"
 fi
 
