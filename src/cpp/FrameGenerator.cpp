@@ -51,7 +51,7 @@ namespace FrameGen
 			return EXIT_SUCCESS;
 		} else if (exit_code == 1) 
 		{
-			Log::error("Environment E2VID missing.");
+			Log::error("Environment 'sert-python' missing.");
 			return EXIT_FAILURE;
 		} else 
 		{
@@ -142,7 +142,7 @@ namespace FrameGen
 		if (!std::filesystem::exists(modelPath))
 		{
 			Log::error("Could not find E2VID model at: ", modelPath.string());
-			Log::error("Run scripts/install_e2vid_env.sh to download the model.");
+			Log::error("Run scripts/install_python_env.sh to download the model.");
 			return EXIT_FAILURE;
 		}
 
@@ -152,14 +152,14 @@ namespace FrameGen
 			return EXIT_FAILURE;
 		}
 
-		std::string command = "conda run -n E2VID python3 " + e2vidPath.string() + " "
+		std::string command = "conda run -n sert-python python3 " + e2vidPath.string() + " "
 							+ "--path_to_model " + modelPath.string() + " "
 							+ "--input_file " + eventFile.string() + " "
 							+ "--output_folder " + outputDir.string() + " "
 							+ "--dataset_name " + datasetName + " "
 							+ "--fixed_duration "
-							+ "--window_duration 33 "; // 33ms
-							// + "--no-normalize";
+							+ "--window_duration 50 " // 50ms
+							+ "--no-normalize";
 							// + "--display ";
 
 		Log::info("Executing E2VID: ", command);

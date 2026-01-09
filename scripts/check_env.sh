@@ -2,7 +2,7 @@
 
 # -l stands for login (load user profile before running commands)
 
-ENV_NAME="E2VID"
+ENV_NAME="sert-python"
 
 # standard conda installation path
 CONDA_PATH="$HOME/anaconda3/etc/profile.d/conda.sh"
