@@ -84,6 +84,10 @@ def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths):
     typestore = get_typestore(Stores.ROS1_NOETIC)
     IMAGE_TYPE = "sensor_msgs/msg/Image"
 
+    if os.path.exists(output_path):
+        os.remove(output_path)
+        print(f"Removed existing bag file: {output_path}")
+
     with Writer(output_path) as bag:
         connection_left = bag.add_connection(
             topic="/cam0/image_raw",
@@ -112,8 +116,8 @@ def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--path", required=True, help="Path to session folder reconstruction/left and reconstruction/right")
-    parser.add_argument("--max_diff_ms", type=float, default=10.0, help="Max timestamp tiff for matching timestamps of frames")
+    parser.add_argument("--path", required=True, help="Path to session folder (should contain reconstruction/left and reconstruction/right)")
+    parser.add_argument("--max_diff_ms", type=float, default=10.0, help="Max timestamp diff for matching timestamps of frames")
 
     args = parser.parse_args()
     

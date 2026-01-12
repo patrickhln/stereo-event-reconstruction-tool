@@ -162,7 +162,7 @@ namespace FrameGen
 							+ "--no-normalize";
 							// + "--display ";
 
-		Log::info("Executing E2VID: ", command);
+		Log::info("Executing: ", command);
 
 		int result = std::system(command.c_str());
 		return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;

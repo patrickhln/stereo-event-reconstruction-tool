@@ -52,25 +52,41 @@ cd scripts
 
 **Recording**
 ```bash
-./sert record -p ./data -v
+./sert record -p <path> -v
 ```
-Creates `./data/session_YYYY-MM-DD_HH-MM-SS/`.
+Creates `<path>/session_YYYY-MM-DD_HH-MM-SS/` (default timestamp-based name) or `<path>/session_<name>/` if using `-n <name>` option.
 
 **Rendering (Events → Frames)**
 ```bash
-./sert render -s ./data/session_YYYY-MM-DD_HH-MM-SS
+./sert render -s <path>/session_<name>
 ```
 Uses the `sert-python` conda environment to run E2VID.
 
 **Calibration**
+
+If a calibration config already exists in `<session>/config/`:
 ```bash
-./sert calibrate -s ./data/session_YYYY-MM-DD_HH-MM-SS
+./sert calibrate -s <path>/session_<name>
 ```
+
+Or create a new calibration config and run calibration:
+```bash
+# Checkerboard example: 7x5 inner corners, 4.3cm spacing
+./sert calibrate -s <path>/session_<name> -t checkerboard -c 7 5 0.043 0.043
+
+# Aprilgrid example: 6x6 tags, 88mm tag size, 30% spacing
+./sert calibrate -s <path>/session_<name> -t aprilgrid -c 6 6 0.088 0.3
+
+# Circlegrid example: 7x6 circles, 3.2cm spacing, asymmetric
+./sert calibrate -s <path>/session_<name> -t circlegrid -c 7 6 0.032 1
+```
+
+For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wiki/calibration-targets
 
 ## Session Structure
 
 ```text
-session_YYYY-MM-DD_HH-MM-SS/
+session_<name>/
 ├── config/
 │   ├── checkerboard.yaml             # Calibration target (user edits)
 │   ├── esvo_stereo.yaml              # Auto-generated from Kalibr

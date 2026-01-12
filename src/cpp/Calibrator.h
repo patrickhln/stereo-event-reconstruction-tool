@@ -1,6 +1,8 @@
 #pragma once
+#include <filesystem>
 
 namespace Calib
 {
-    // Future calibration logic will go here
+	int createRosBag(const std::filesystem::path sessionPath);
+	int run(const std::filesystem::path sessionPath);
 }

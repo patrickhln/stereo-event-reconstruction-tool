@@ -14,11 +14,24 @@ fi
 
 # relative to absolute path
 SESSION_PATH=$(realpath "$SESSION_PATH")
-
+CONFIG_PATH="$SESSION_PATH/config"
 OUTPUT_DIR="$SESSION_PATH/calibration"
 
 if [ ! -d "$OUTPUT_DIR" ]; then
     mkdir -p "$OUTPUT_DIR"
+fi
+
+TARGET_FILE=""
+for t in "aprilgrid.yaml" "checkerboard.yaml" "circlegrid.yaml"; do
+    if [ -f "$CONFIG_PATH/$t" ]; then
+        TARGET_FILE="/data/config/$t"
+        break
+    fi
+done
+
+if [ -z "$TARGET_FILE" ]; then
+    echo "Error: No calibration target file (aprilgrid, checkerboard, or circlegrid) found in $CONFIG_PATH"
+    exit 1
 fi
 
 # local user ID and Group ID to fix permissions later
@@ -34,12 +47,12 @@ docker run --rm \
 	sert-ros:latest \
 	/bin/bash -c "
 	rosrun kalibr kalibr_calibrate_cameras \
-		--target /data/config/checkerboard.yaml \
+		--target $TARGET_FILE \
 		--bag /data/intermediate/stereo_frames.bag \
 		--models pinhole-radtan pinhole-radtan \
 		--topics /cam0/image_raw /cam1/image_raw \
 		--approx-sync 0.02 \
-		--dont-show-report \
+		--dont-show-report || exit 1
 	
 	echo 'Moving results...';
     mv /data/intermediate/stereo_frames-camchain.yaml /data/calibration/ 2>/dev/null || true;
@@ -49,7 +62,7 @@ docker run --rm \
     echo 'Fixing permissions...';
     chown -R $USER_ID:$GROUP_ID /data/calibration;
 	
-	echo "Done! All files are in: $OUTPUT_DIR"
+	echo 'Done! All files are in: $OUTPUT_DIR'
 	"
 
 # -e HOME=/tmp: ROS tries to create a cache
