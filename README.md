@@ -115,60 +115,15 @@ session_<name>/
 ffplay -framerate 20 -pattern_type glob -i '<session>/reconstruction/{left/right}/*.png'
 ```
 
-# Install E2VID (Reference / Manual Setup) [Optional]
+# Third-party Components
 
-> [!IMPORTANT]
-> **Automated Installation**
->
-> E2VID is included in this repository as a git submodule (`rpg_e2vid/`), pointing to a [fork](https://github.com/patrickhln/rpg_e2vid/tree/cpu-support) of [E2VID](https://github.com/uzh-rpg/rpg_e2vid).
->
-> The steps below are handled **automatically** by `scripts/install_python_env.sh` (which sets up the E2VID environment) and **not required** for normal usage.
->
-> The instructions here are provided primarily for reference and to document the underlying process.
+This project integrates the following third-party tools:
 
-The installation requires [Anaconda3](https://www.anaconda.com/download).
-Minor adjustments were made to the code and installation requirements compared to the [original README](https://github.com/uzh-rpg/rpg_e2vid/blob/master/README.md) to ensure CPU compatibility.
+- **E2VID**: Event-to-video reconstruction - https://github.com/uzh-rpg/rpg_e2vid
+  - Included as git submodule using a [fork](https://github.com/patrickhln/rpg_e2vid)
+  - Requires `git clone --recursive` to initialize
+- **Kalibr**: Camera calibration toolbox - https://github.com/ethz-asl/kalibr
+- **ESVO**: Event-based Stereo Visual Odometry - https://github.com/HKUST-Aerial-Robotics/ESVO
 
-## 1. Create the environment
+All components are automatically set up by the installation scripts. Original licenses and attributions are preserved.
 
-```bash
-conda create -n E2VID python=3.8
-conda activate E2VID
-```
-
-## 2. Install Dependencies
-
-
-```bash
-conda install -y -c conda-forge pandas scipy opencv protobuf libprotobuf absl-py numpy=1.23.5
-```
-
-Since E2VID uses `np.int` which was deprecated in 1.20 and removed in 1.24 we
-need to set numpy version explicitly
-
-Now, for the pytorch installation, choose based on your hardware:
-
-```bash
-# NVIDIA GPU (CUDA 12.1)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-
-# CPU only
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-```
-
-## 3. Download model
-
-Download the pretrained model:
-
-```bash 
-mkdir -p rpg_e2vid/pretrained
-wget "http://rpg.ifi.uzh.ch/data/E2VID/models/E2VID_lightweight.pth.tar" -O rpg_e2vid/pretrained/E2VID_lightweight.pth.tar
-```
-
-
-# Third-party components
-
-- **E2VID**: https://github.com/uzh-rpg/rpg_e2vid
-    - Used via a fork (branch `cpu-support`) and included as a git submodule.
-    - Fork: https://github.com/patrickhln/rpg_e2vid/tree/cpu-support
-    - All original license information is preserved.
