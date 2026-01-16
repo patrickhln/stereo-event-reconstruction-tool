@@ -296,7 +296,7 @@ void logUsage(char* argv[])
         "  record       Creates a timestamped session in <path> and saves raw .aedat4 data\n",
         "  render       Processes raw data into frames/bags within the session directory\n",
         "  calibrate    Computes intrinsics/extrinsics from frames and updates session config\n",
-        "  esvo         Runs 3D reconstruction and saves results to the session's esvo/ folder\n\n",
+        "  reconstruct  Runs 3D reconstruction and saves results to the session's <method>/ folder\n\n",
 
         "record Options:\n",
         "  -p, --path <dir>      (Required) Parent directory where 'session_YYYY-MM-DD..' or 'session_<name>' (if -n is provided) is created\n",
@@ -317,7 +317,8 @@ void logUsage(char* argv[])
 		"    'circlegrid':   <targetCols> <targetRows> <spacing(m)> <asymetric(0/1)>\n\n" 
 		"    For further explanation of the targets and its configs, visit: https://github.com/ethz-asl/kalibr/wiki/calibration-targets\n\n"
 
-        "esvo Options:\n",
+        "reconstruct Options:\n",
+		"  -m, --method			 (Required) Choose between different methods for reconstruction (esvo)\n"
         "  -s, --session <dir>   (Required) Path to the session folder (outputs to /esvo/)\n\n",
 
 		"For more information about the session structure, take a look at https://github.com/patrickhln/stereo-event-reconstruction-tool README.md\n"
