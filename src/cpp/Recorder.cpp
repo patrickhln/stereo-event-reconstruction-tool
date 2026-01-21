@@ -1,6 +1,8 @@
 #include "Recorder.h"
 #include "Log.h"
 
+#include <dv-processing/data/frame_base.hpp>
+#include <dv-processing/data/imu_base.hpp>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -128,6 +130,28 @@ namespace StereoRecorder
 				visQueueCondition.notify_one();
 			}
 		};
+		// if (leftCamera->isFrameStreamAvailable())
+		// {
+		// 	leftHandler.mFrameHandler = [&](const dv::Frame &frame)
+		// 	{
+		// 		writer.left.writeFrame(frame);
+		// 	};
+		// }
+		if (leftCamera->isImuStreamAvailable()) 
+		{
+				leftHandler.mImuHandler = [&](const dv::IMUPacket &imu)
+				{
+					writer.left.writeImuPacket(imu);
+				};
+		}
+		if (leftCamera->isTriggerStreamAvailable()) 
+		{
+				leftHandler.mTriggersHandler = [&](const dv::TriggerPacket &triggers)
+				{
+					writer.left.writeTriggerPacket(triggers);
+				};
+		}
+
 		rightHandler.mEventHandler = [&](const dv::EventStore &events) 
 		{
 			writer.right.writeEvents(events);	
@@ -148,6 +172,20 @@ namespace StereoRecorder
 				visQueueCondition.notify_one();
 			}
 		};
+		if (rightCamera->isImuStreamAvailable()) 
+		{
+				rightHandler.mImuHandler = [&](const dv::IMUPacket &imu)
+				{
+					writer.right.writeImuPacket(imu);
+				};
+		}
+		if (rightCamera->isTriggerStreamAvailable()) 
+		{
+				rightHandler.mTriggersHandler = [&](const dv::TriggerPacket &triggers)
+				{
+					writer.right.writeTriggerPacket(triggers);
+				};
+		}
 
 
 		// recording (producer) thread
@@ -171,9 +209,11 @@ namespace StereoRecorder
 
 			cv::namedWindow("Left", cv::WINDOW_NORMAL);
 			cv::namedWindow("Right", cv::WINDOW_NORMAL);
-
+	
+			// 24 FPS: 1,000,000 / 24 = 41,666us
+			const auto frameInterval = dv::Duration(41666);
 			// https://gitlab.com/inivation/dv/dv-processing/-/blob/master/samples/io/stereo-capture/stereo-capture.cpp
-			slicer.doEveryNumberOfEvents(15000,
+			slicer.doEveryTimeInterval(frameInterval,
 				// Here we receive events from two camera, time-synchronized
 				[&](const dv::EventStore &leftEvents, const dv::EventStore &rightEvents) {
 					if (showVisualization)
@@ -223,6 +263,17 @@ namespace StereoRecorder
 				Log::info("Visualization frames dropped: ", droppedVisFrames);
 			}
 			cv::destroyAllWindows();
+		} 
+		else 
+		{
+			Log::info("Recording in headless mode. Press Ctrl+C to stop.");
+			while (!stopSignal.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (!leftCamera->isRunning() || !rightCamera->isRunning()) {
+                    Log::error("Camera disconnected unexpectedly.");
+                    stopSignal.store(true);
+                }
+            }
 		}
 		// When no visualization, the thread joins below will block until recording completes
 
