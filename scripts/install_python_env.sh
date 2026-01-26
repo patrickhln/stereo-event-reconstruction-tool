@@ -41,8 +41,11 @@ conda activate sert-python
 echo "Installing E2VID dependencies..."
 conda install -y -c conda-forge pandas scipy opencv protobuf libprotobuf absl-py numpy=1.23.5
 
-echo "Installing ROS bag tools..."
-pip install rosbags
+echo "Installing ROS specific tools..."
+pip install rosbags 
+
+echo "Installing dv-processing, PyYAML..."
+pip install dv-processing PyYAML
 
 echo "Checking Graphics Card Vendor (requires \`pciutils\`)..."
 
