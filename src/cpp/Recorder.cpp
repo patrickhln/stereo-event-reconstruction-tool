@@ -43,17 +43,24 @@ namespace StereoRecorder
 		Log::info("Camera ", 0, ": ", cameras[0].cameraModel, "_", cameras[0].serialNumber);
 		Log::info("Camera ", 1, ": ", cameras[1].cameraModel, "_", cameras[1].serialNumber);
 		
-		auto leftCamera = dv::io::camera::openSync(cameras[0]);
-		auto rightCamera = dv::io::camera::openSync(cameras[1]);
+		// open cameras without assuming order
+		auto cam0 = dv::io::camera::openSync(cameras[0]);
+		auto cam1 = dv::io::camera::openSync(cameras[1]);
 
-		dv::io::camera::synchronizeAnyTwo(leftCamera, rightCamera);
+		dv::io::camera::synchronizeAnyTwo(cam0, cam1);
 
-		if(leftCamera->isMaster())
-			Log::info("The left camera is clock syncronization master");
-		else if (rightCamera->isMaster())	
-			Log::info("The right camera is clock syncronization master");
-		else
-			throw dv::exceptions::RuntimeError("No clock syncronization master was detected");
+		// determine which camera is the hardware sync master
+		if (!cam0->isMaster() && !cam1->isMaster())
+			throw dv::exceptions::RuntimeError("No clock synchronization master was detected. Check sync cable.");
+
+		// assign left/right based on master status: master = left camera
+		// this is the standard stereo convention (left camera is reference)
+		const bool cam0IsMaster = cam0->isMaster();
+		auto& leftCamera = cam0IsMaster ? cam0 : cam1;
+		auto& rightCamera = cam0IsMaster ? cam1 : cam0;
+
+		Log::info("Left camera (master):  ", leftCamera->getCameraName());
+		Log::info("Right camera (slave):  ", rightCamera->getCameraName());
 
 
 		// temporal, change to consistent load function
