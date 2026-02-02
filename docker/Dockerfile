@@ -38,6 +38,10 @@ RUN apt-get update && apt-get install -y \
 	ros-noetic-image-geometry \
 	ros-noetic-pcl-ros \
     ros-noetic-pcl-conversions \
+    # Visualization (for ESVO)
+    ros-noetic-rviz \
+    ros-noetic-rqt-gui \
+    ros-noetic-rqt-image-view \
     # cleanup
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,18 +51,20 @@ WORKDIR /catkin_ws/src
 # Install Kalibr
 RUN git clone --depth 1 https://github.com/ethz-asl/kalibr.git
 
-# Install ESVO & dependencies 
-RUN git clone --depth 1 https://github.com/HKUST-Aerial-Robotics/ESVO.git
+# Install ESVO & dependencies (commit 538b576 + patch is the working status)
+RUN git clone https://github.com/HKUST-Aerial-Robotics/ESVO.git && \
+    cd ESVO && \
+    git checkout 538b576
 
 # patch that fixes eigen 3.4 problem
-# (https://github.com/Jas0nG/ESVO/tree/fix/eigen_3_4_0)
+# (https://github.com/Jas0nG/ESVO/tree/fix/eigen_3_4_0) (+ typo in "happenning")
 COPY ./esvo_eigen_fix.patch /catkin_ws/src/ESVO/esvo_eigen_fix.patch
 # patch that applies changes to CmakeLists.txt for linker to work correctly
 COPY ./esvo_linker_fix.patch /catkin_ws/src/ESVO/esvo_linker_fix.patch
 
 RUN cd /catkin_ws/src/ESVO && \
-    patch -p1 < esvo_eigen_fix.patch && \
-    patch -p1 < esvo_linker_fix.patch
+    patch --verbose -p1 < esvo_eigen_fix.patch && \
+    patch --verbose -p1 < esvo_linker_fix.patch
 
 # dependencies.yaml contains a list to other git repos ESVO needs, vcs-import
 # reads and clones automatically
@@ -89,7 +95,7 @@ RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
 	catkin init && \
 	catkin config --extend /opt/ros/noetic && \
 	catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release && \
-	catkin build -j2"
+	catkin build -j6"
 
 # setup entrypoint
 COPY ./entrypoint.sh /entrypoint.sh

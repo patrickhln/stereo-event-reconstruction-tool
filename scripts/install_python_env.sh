@@ -47,6 +47,9 @@ pip install rosbags
 echo "Installing dv-processing, PyYAML..."
 pip install dv-processing PyYAML
 
+echo "Installing others..."
+pip install gdown matplotlib
+
 echo "Checking Graphics Card Vendor (requires \`pciutils\`)..."
 
 # Default to CPU

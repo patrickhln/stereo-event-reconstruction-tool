@@ -124,6 +124,9 @@ This project integrates the following third-party tools:
   - Requires `git clone --recursive` to initialize
 - **Kalibr**: Camera calibration toolbox - https://github.com/ethz-asl/kalibr
 - **ESVO**: Event-based Stereo Visual Odometry - https://github.com/HKUST-Aerial-Robotics/ESVO
+  - Uses specific commit `538b576` as distinct from the latest main branch to ensure correct reconstruction results (see issue: https://github.com/HKUST-Aerial-Robotics/ESVO/issues/15).
+
+  - Includes a patch for Eigen 3.4 compatibility.
 
 All components are automatically set up by the installation scripts. Original licenses and attributions are preserved.
 
