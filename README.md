@@ -1,6 +1,7 @@
 # SERT - Stereo Event Reconstruction Tool
 
 **Tested on:** Ubuntu 24.04 LTS
+**Hardware:** DVXplorer
 
 # Installation
 
@@ -29,7 +30,7 @@ sudo apt install -y libopencv-dev
 git clone --recursive git@github.com:patrickhln/stereo-event-reconstruction-tool.git
 cd stereo-event-reconstruction-tool
 mkdir -p build 
-cmake -S . -B build/ -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build/ -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
@@ -44,75 +45,77 @@ cd scripts
 ```bash
 sudo apt install -y docker.io
 sudo usermod -aG docker $USER  # Log out and back in after this
+sudo usermod -aG video,render $USER  # Needed for GPU OpenGL in Docker
+# For NVIDIA GPUs: install nvidia-container-toolkit on the host, then, for the run_esvo.sh use: --gpu nvidia
+# To be integrated into cli
 cd scripts
 ./docker_build.sh  # This might take a while! (~20min) 
 ```
 
 # Usage
 
-**Recording**
-```bash
-./sert record -p <path> -v
-```
-Creates `<path>/session_YYYY-MM-DD_HH-MM-SS/` (default timestamp-based name) or `<path>/session_<name>/` if using `-n <name>` option.
+## Quick Start
 
-**Rendering (Events → Frames)**
 ```bash
-./sert render -s <path>/session_<name>
-```
-Uses the `sert-python` conda environment to run E2VID.
+# 1. Record calibration data
+./build/Debug/sert record -p ./data -s lab -t calib
 
-**Calibration**
+# 2. Convert events to frames using E2VID
+./build/Debug/sert render -s ./data/session_lab -c calib_01
 
-If a calibration config already exists in `<session>/config/`:
-```bash
-./sert calibrate -s <path>/session_<name>
+# 3. Run Kalibr calibration (with target config)
+./build/Debug/sert calibrate -s ./data/session_lab -c calib_01 \
+    -t checkerboard --config 7 5 0.043 0.043
+
+# 4. Record a scene
+./build/Debug/sert record -p ./data -s lab -t scene -n desk_test
 ```
 
-Or create a new calibration config and run calibration:
-```bash
-# Checkerboard example: 7x5 inner corners, 4.3cm spacing
-./sert calibrate -s <path>/session_<name> -t checkerboard -c 7 5 0.043 0.043
-
-# Aprilgrid example: 6x6 tags, 88mm tag size, 30% spacing
-./sert calibrate -s <path>/session_<name> -t aprilgrid -c 6 6 0.088 0.3
-
-# Circlegrid example: 7x6 circles, 3.2cm spacing, asymmetric
-./sert calibrate -s <path>/session_<name> -t circlegrid -c 7 6 0.032 1
-```
+Notes:
+- `record` uses `-p` for the parent directory and optional `-s` for the session name (prefix `session_` is always added).
+- Example: `-s lab` creates `session_lab/`.
+- If no session name is provided, a `session_<timestamp>` folder is created.
+- Other commands (`render`, `calibrate`) require a session directory path.
 
 For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wiki/calibration-targets
 
 ## Session Structure
 
 ```text
-session_<name>/
+<session>/
+├── session.yaml                            # Session metadata + active calibration
 ├── config/
-│   ├── checkerboard.yaml             # Calibration target (user edits)
-│   ├── esvo_stereo.yaml              # Auto-generated from Kalibr
-│   └── esvo_custom.launch            # Auto-generated ROS launch file
-├── raw/
-│   ├── stereo_recording.aedat4       # Raw event data
-│   └── camera_metadata.txt           # Camera info (left and right)
-├── intermediate/
-│   ├── leftEvents.txt                # E2VID input
-│   ├── rightEvents.txt               # E2VID input
-│   ├── stereo_frames.bag             # ROS bag for Kalibr
-│   └── scene_events.bag              # ROS bag for ESVO
-├── reconstruction/
-│   ├── left/                         # E2VID output frames
-│   └── right/                        # E2VID output frames
-├── calibration/
-│   ├── camchain-stereo_frames.yaml   # Kalibr output (intrinsics + extrinsics)
-│   └── report-stereo_frames.pdf      # Kalibr calibration report
-└── esvo/
-    ├── trajectory.txt                # Estimated camera poses
-    └── pointcloud.pcd                # 3D reconstruction result
+│   ├── targets/                            # Calibration target definitions
+│   │   └── checkerboard.yaml
+│   └── esvo/                               # ESVO configuration
+│       ├── left.yaml                       # Left camera calibration (from camchain)
+│       ├── right.yaml                      # Right camera calibration (from camchain)
+│       ├── mapping.yaml                    # ESVO mapping parameters
+│       ├── tracking.yaml                   # ESVO tracking parameters
+│       └── ts_parameters.yaml              # Time surface parameters
+├── calibrations/
+│   ├── calib_01/                           # Calibration capture (auto)
+│   │   ├── raw/
+│   │   ├── intermediate/
+│   │   ├── frames/
+│   │   ├── stereo_frames-camchain.yaml     # Kalibr output
+│   │   ├── stereo_frames-report-cam.pdf
+│   │   └── stereo_frames-results-cam.txt
+│   └── test/                               # Custom-named calibration capture
+├── scenes/
+│   ├── scene_2024-01-26_10-30-00/           # Auto-named scene
+│   │   ├── raw/
+│   │   ├── intermediate/
+│   │   ├── frames/
+│   │   └── reconstruction/esvo/
+│   └── scene_desk_test/                    # Custom-named scene
+└── logs/                                   # (planned) Session logs
 ```
 
-**View the created Frames**
+## View Frames
+
 ```bash
-ffplay -framerate 20 -pattern_type glob -i '<session>/reconstruction/{left/right}/*.png'
+ffplay -framerate 20 -pattern_type glob -i './data/session_lab/calibrations/calib_01/frames/left/*.png'
 ```
 
 # Third-party Components
@@ -124,9 +127,11 @@ This project integrates the following third-party tools:
   - Requires `git clone --recursive` to initialize
 - **Kalibr**: Camera calibration toolbox - https://github.com/ethz-asl/kalibr
 - **ESVO**: Event-based Stereo Visual Odometry - https://github.com/HKUST-Aerial-Robotics/ESVO
-  - Uses specific commit `538b576` as distinct from the latest main branch to ensure correct reconstruction results (see issue: https://github.com/HKUST-Aerial-Robotics/ESVO/issues/15).
-
-  - Includes a patch for Eigen 3.4 compatibility.
 
 All components are automatically set up by the installation scripts. Original licenses and attributions are preserved.
 
+# ESVO Compatibility Note
+
+The Docker environment provided in this project automatically handles a specific compatibility version for ESVO:
+- **Commit**: `538b576` (Oct 2021)
+- **Reason**: Newer commits of ESVO were found to produce degenerate results on small-scale datasets (like RPG/Indoor).

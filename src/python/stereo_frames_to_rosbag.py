@@ -115,14 +115,14 @@ def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--path", required=True, help="Path to session folder (should contain reconstruction/left and reconstruction/right)")
+    parser = argparse.ArgumentParser(description="Convert stereo frames to ROS bag for Kalibr calibration")
+    parser.add_argument("--path", required=True, help="Path to capture directory (should contain frames/left and frames/right)")
     parser.add_argument("--max_diff_ms", type=float, default=10.0, help="Max timestamp diff for matching timestamps of frames")
 
     args = parser.parse_args()
     
-    left_frames_path_list, left_timestamps = load_frames_and_timestamps(os.path.join(args.path, "reconstruction", "left"))
-    right_frames_path_list, right_timestamps = load_frames_and_timestamps(os.path.join(args.path, "reconstruction", "right"))
+    left_frames_path_list, left_timestamps = load_frames_and_timestamps(os.path.join(args.path, "frames", "left"))
+    right_frames_path_list, right_timestamps = load_frames_and_timestamps(os.path.join(args.path, "frames", "right"))
 
     pairs = match_stereo_pairs(left_timestamps, right_timestamps, args.max_diff_ms)
 

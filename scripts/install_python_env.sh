@@ -48,7 +48,7 @@ echo "Installing dv-processing, PyYAML..."
 pip install dv-processing PyYAML
 
 echo "Installing others..."
-pip install gdown matplotlib
+pip install gdown matplotlib opencv-python
 
 echo "Checking Graphics Card Vendor (requires \`pciutils\`)..."
 
