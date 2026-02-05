@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     # add ubuntu-science repo for libcaer-dev
     && add-apt-repository ppa:ubuntu-toolchain-r/test \
     && add-apt-repository ppa:inivation-ppa/inivation \
+    && add-apt-repository ppa:kisak/turtle \
     && apt-get update \
     # math libraries
     && apt-get install -y \
@@ -42,6 +43,9 @@ RUN apt-get update && apt-get install -y \
     ros-noetic-rviz \
     ros-noetic-rqt-gui \
     ros-noetic-rqt-image-view \
+    ros-noetic-rqt-reconfigure \
+    # mesa OpenGL userspace drivers (for Intel iGPU in Docker)
+    libgl1-mesa-dri libglx-mesa0 libegl1-mesa \
     # cleanup
     && rm -rf /var/lib/apt/lists/*
 
