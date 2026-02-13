@@ -70,16 +70,16 @@ fi
 if [[ "$INSTALL_TYPE" == "cuda" ]]; then
     echo "NVIDIA GPU found -> installing PyTorch with CUDA"
     pip install torch torchvision
-    E2VID_BRANCH="master"
+    E2VID_BRANCH="xpu-support"
 elif [[ "$INSTALL_TYPE" == "xpu" ]]; then
-    echo "Intel GPU detected, but XPU support has complex dependencies"
-    echo "Falling back to CPU-only installation"
-	pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-    E2VID_BRANCH="cpu-support"
+    echo "Intel GPU found -> installing PyTorch XPU + IPEX"
+	pip install torch==2.8.0+xpu torchvision==0.23.0+xpu --index-url https://download.pytorch.org/whl/xpu
+	pip install intel-extension-for-pytorch==2.8.0
+    E2VID_BRANCH="xpu-support"
 else
     echo "No NVIDIA GPU found (or lspci missing) -> installing CPU-only PyTorch"
 	pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-    E2VID_BRANCH="cpu-support"
+    E2VID_BRANCH="xpu-support"
 fi
 
 echo
@@ -97,4 +97,3 @@ wget -q --show-progress "http://rpg.ifi.uzh.ch/data/E2VID/models/E2VID_lightweig
 # wget "http://rpg.ifi.uzh.ch/data/E2VID/models/E2VID_lightweight.pth.tar" -O ../rpg_e2vid/pretrained/E2VID_lightweight.pth.tar
 
 echo "Installation Complete!"
-
