@@ -350,7 +350,23 @@ def main():
 
     args = parser.parse_args()
     
-    convert_aedat4_to_bag(args.path, args.window_ms, calib_dir=args.calibration)
+    calib = args.calibration
+    if not calib:
+        # auto-detect from session.yaml
+        current = os.path.abspath(args.path)
+        while current != os.path.dirname(current):
+            session_yaml = os.path.join(current, "session.yaml")
+            if os.path.exists(session_yaml):
+                with open(session_yaml) as f:
+                    session = yaml.safe_load(f)
+                    active_calib = session.get("active_calibration")
+                    if active_calib:
+                        calib = os.path.join(current, "config", "esvo")
+                        break
+                break
+            current = os.path.dirname(current)
+    
+    convert_aedat4_to_bag(args.path, args.window_ms, calib_dir=calib)
 
 if __name__ == "__main__":
     main()

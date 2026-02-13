@@ -31,15 +31,7 @@ Session Session::create(const std::filesystem::path& parentPath, const std::stri
 {
 	Session session;
 	
-	std::string baseName = name.empty() ? "session_" + getCurrentTimestamp() : "session_" + name;
-	std::string sessionName = baseName;
-	int suffix = 1;
-	while (std::filesystem::exists(parentPath / sessionName))
-	{
-		std::stringstream ss;
-		ss << baseName << "_" << std::setfill('0') << std::setw(2) << suffix++;
-		sessionName = ss.str();
-	}
+	std::string sessionName = name.empty() ? getCurrentTimestamp() : name;
 	session.rootPath_ = parentPath / sessionName;
 	session.name_ = sessionName;
 	session.created_ = getISOTimestamp();
@@ -68,8 +60,25 @@ Session Session::load(const std::filesystem::path& sessionPath)
 
 bool Session::isValidSession(const std::filesystem::path& path)
 {
-	std::filesystem::path sessionYaml = path / "session.yaml";
-	return std::filesystem::exists(sessionYaml);
+	// maybe make sure session.yaml also contains certain keywords
+	return std::filesystem::exists(path / "session.yaml");
+}
+
+std::filesystem::path Session::findSessionRoot(const std::filesystem::path& startPath)
+{
+	std::filesystem::path current = std::filesystem::absolute(startPath);
+	if (std::filesystem::is_regular_file(current))
+		current = current.parent_path();
+	
+	while (!current.empty())
+	{
+		if (isValidSession(current))
+			return current;
+		auto parent = current.parent_path();
+		if (parent == current) break;
+		current = parent;
+	}
+	throw std::runtime_error("No session found in path hierarchy: " + startPath.string());
 }
 
 void Session::initializeDirectories()
@@ -265,11 +274,7 @@ void Session::setActiveCalibration(const std::string& calibName)
 	}
 	if (!std::filesystem::exists(camchainPath))
 	{
-		std::filesystem::path legacyCamchainPath = calibDir / "camchain.yaml";
-		if (!std::filesystem::exists(legacyCamchainPath))
-		{
-			throw std::runtime_error("Calibration has no stereo_frames-camchain.yaml: " + calibName);
-		}
+		throw std::runtime_error("Calibration has no stereo_frames-camchain.yaml: " + calibName);
 	}
 	
 	activeCalibration_ = calibName;
@@ -289,11 +294,6 @@ std::filesystem::path Session::getActiveCamchainPath() const
 	if (std::filesystem::exists(camchainPath))
 	{
 		return camchainPath;
-	}
-	std::filesystem::path legacyCamchainPath = calibDir / "camchain.yaml";
-	if (std::filesystem::exists(legacyCamchainPath))
-	{
-		return legacyCamchainPath;
 	}
 	throw std::runtime_error("Active calibration has no camchain file: " + activeCalibration_.value());
 }

@@ -17,6 +17,7 @@ public:
 	static Session load(const std::filesystem::path& sessionPath);
 	
 	static bool isValidSession(const std::filesystem::path& path);
+	static std::filesystem::path findSessionRoot(const std::filesystem::path& startPath);
 
 	std::filesystem::path getPath() const { return rootPath_; }
 	std::filesystem::path getConfigDir() const { return rootPath_ / "config"; }

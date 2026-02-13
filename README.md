@@ -57,25 +57,33 @@ cd scripts
 ## Quick Start
 
 ```bash
-# 1. Record calibration data
-./build/Debug/sert record -p ./data -s lab -t calib
+# 1. Record calibration (creates 'lab/' session in current directory)
+./build/Debug/sert record lab -t calib
 
 # 2. Convert events to frames using E2VID
-./build/Debug/sert render -s ./data/session_lab -c calib_01
+./build/Debug/sert render lab/calibrations/calib_01
 
 # 3. Run Kalibr calibration (with target config)
-./build/Debug/sert calibrate -s ./data/session_lab -c calib_01 \
-    -t checkerboard --config 7 5 0.043 0.043
+./build/Debug/sert calibrate lab/calibrations/calib_01 \
+    -t checkerboard --config 8 6 0.068 0.068
 
 # 4. Record a scene
-./build/Debug/sert record -p ./data -s lab -t scene -n desk_test
+./build/Debug/sert record lab -t scene -n outdoor
 ```
 
-Notes:
-- `record` uses `-p` for the parent directory and optional `-s` for the session name (prefix `session_` is always added).
-- Example: `-s lab` creates `session_lab/`.
-- If no session name is provided, a `session_<timestamp>` folder is created.
-- Other commands (`render`, `calibrate`) require a session directory path.
+**Commands:**
+```
+record [<session>] -t calib|scene [-n <name>] [-v]
+render <capture_path>
+calibrate <calibration_path> [-t <target> --config <args>]
+set-calibration <calibration_path>
+```
+
+**Notes:**
+- Session names are user-defined or automatically generated with timestamp suffix.
+- If session not specified, `record` uses current directory
+- Tool auto-detects session root by finding `session.yaml`
+- Run `./build/Debug/sert` without arguments to see full help
 
 For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wiki/calibration-targets
 
@@ -115,7 +123,7 @@ For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wi
 ## View Frames
 
 ```bash
-ffplay -framerate 20 -pattern_type glob -i './data/session_lab/calibrations/calib_01/frames/left/*.png'
+ffplay -framerate 20 -pattern_type glob -i '*.png'
 ```
 
 # Third-party Components

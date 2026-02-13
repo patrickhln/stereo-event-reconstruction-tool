@@ -15,6 +15,8 @@ set(SOURCE_FILES
 	src/cpp/Main.cpp
 	src/cpp/Recorder.cpp
 	src/cpp/FrameGenerator.cpp
+	src/cpp/Aedat4Filter.cpp
+	src/cpp/HotPixelFilter.cpp
 	src/cpp/Calibrator.cpp
 	src/cpp/Session.cpp
 )

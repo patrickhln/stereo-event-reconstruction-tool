@@ -9,6 +9,7 @@
 #include "Recorder.h"
 #include "FrameGenerator.h"
 #include "Calibrator.h"
+#include "Aedat4Filter.h"
 
 void logUsage(char* argv[]);
 
@@ -17,63 +18,6 @@ static std::atomic<bool> stopSignal(false);
 static void signalHandler(int)
 {
 	stopSignal.store(true);
-}
-
-static std::filesystem::path normalizeSessionArg(const std::string& sessionPathStr)
-{
-	std::filesystem::path sessionPath = std::filesystem::path(sessionPathStr).lexically_normal();
-	if (sessionPath.filename().empty())
-	{
-		sessionPath = sessionPath.parent_path();
-	}
-	return sessionPath;
-}
-
-static Session loadSessionFromPath(const std::string& sessionPathStr)
-{
-	std::filesystem::path sessionPath = normalizeSessionArg(sessionPathStr);
-	if (!Session::isValidSession(sessionPath))
-	{
-		throw std::runtime_error("Invalid session path: " + sessionPath.string());
-	}
-	return Session::load(sessionPath);
-}
-
-static Session loadOrCreateSessionInParent(const std::string& parentPathStr, const std::string& sessionName)
-{
-	std::filesystem::path parentPath = normalizeSessionArg(parentPathStr);
-	if (parentPath.empty())
-	{
-		parentPath = ".";
-	}
-	if (Session::isValidSession(parentPath))
-	{
-		throw std::runtime_error("Parent path is already a session: " + parentPath.string());
-	}
-	if (std::filesystem::exists(parentPath) && !std::filesystem::is_directory(parentPath))
-	{
-		throw std::runtime_error("Parent path is not a directory: " + parentPath.string());
-	}
-	if (!std::filesystem::exists(parentPath))
-	{
-		std::filesystem::create_directories(parentPath);
-	}
-	std::string normalizedName;
-	if (!sessionName.empty())
-	{
-		normalizedName = "session_" + sessionName;
-		std::filesystem::path sessionPath = parentPath / normalizedName;
-		if (Session::isValidSession(sessionPath))
-		{
-			return Session::load(sessionPath);
-		}
-		if (std::filesystem::exists(sessionPath))
-		{
-			throw std::runtime_error("Session path exists but has no session.yaml: " + sessionPath.string());
-		}
-		return Session::create(parentPath, sessionName);
-	}
-	return Session::create(parentPath, "");
 }
 
 int main (int argc, char *argv[])
@@ -90,42 +34,31 @@ int main (int argc, char *argv[])
 
 	if (command == "render")
 	{
-		std::string sessionPathStr;
-		std::string captureName;
-
-		for (int i = 2; i < argc; ++i) 
+		if (argc < 3)
 		{
-			std::string arg = argv[i];
-			if ((arg == "-s" || arg == "--session") && i + 1 < argc) sessionPathStr = argv[++i];
-			if ((arg == "-c" || arg == "--capture") && i + 1 < argc) captureName = argv[++i];
-		}
-
-		if (sessionPathStr.empty())
-		{
-			Log::error("Error: render requires -s (session path).");
-			logUsage(argv);
-			return EXIT_FAILURE;
-		}
-
-		if (captureName.empty())
-		{
-			Log::error("Error: render requires -c (capture name).");
+			Log::error("Error: render requires capture path");
 			logUsage(argv);
 			return EXIT_FAILURE;
 		}
 
 		try
 		{
-			Session session = loadSessionFromPath(sessionPathStr);
-			std::filesystem::path captureDir = session.getCaptureDir(captureName);
+			std::filesystem::path capturePath = std::filesystem::absolute(argv[2]);
+			if (!std::filesystem::exists(capturePath))
+			{
+				Log::error("Error: Capture path does not exist: ", capturePath.string());
+				return EXIT_FAILURE;
+			}
+
+			Session session = Session::load(Session::findSessionRoot(capturePath));
 			
-			std::filesystem::path rawDir = Session::getRawDir(captureDir);
-			std::filesystem::path intermediateDir = Session::getIntermediateDir(captureDir);
-			std::filesystem::path framesDir = Session::getFramesDir(captureDir);
+			std::filesystem::path rawDir = Session::getRawDir(capturePath);
+			std::filesystem::path intermediateDir = Session::getIntermediateDir(capturePath);
+			std::filesystem::path framesDir = Session::getFramesDir(capturePath);
 
 			if (!std::filesystem::exists(rawDir))
 			{
-				Log::error("Invalid capture: 'raw' directory missing in ", captureDir.string());
+				Log::error("Invalid capture: 'raw' directory missing in ", capturePath.string());
 				return EXIT_FAILURE;
 			}
 
@@ -152,58 +85,89 @@ int main (int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	}
-	else if (command == "record")
-	{		
-		std::string parentPathStr;
-		std::string captureName;
-		std::string captureType;
-		std::string sessionName;
-		bool visualize = false;
-
-		for (int i = 2; i < argc; ++i)
+	else if (command == "filter")
+	{
+		if (argc < 3)
 		{
-			std::string arg = argv[i];
-
-			if(arg == "-v" || arg == "--visualize") 
-				visualize = true;
-
-			else if ((arg == "-p" || arg == "--parent") && i + 1 < argc)
-				parentPathStr = argv[++i];
-
-			else if ((arg == "-s" || arg == "--session") && i + 1 < argc)
-				sessionName = argv[++i];
-
-			else if ((arg == "-n" || arg == "--name") && i + 1 < argc)
-				captureName = argv[++i];
-
-			else if ((arg == "-t" || arg == "--type") && i + 1 < argc)
-				captureType = argv[++i];
-		}
-		
-		if (parentPathStr.empty())
-		{
-			Log::error("Error: Parent path not specified (-p).");
-			logUsage(argv);
-			return EXIT_FAILURE;
-		}
-
-		if (captureType.empty())
-		{
-			Log::error("Error: Capture type not specified (--type calib or --type scene).");
-			logUsage(argv);
-			return EXIT_FAILURE;
-		}
-
-		if (captureType != "calib" && captureType != "scene")
-		{
-			Log::error("Error: Invalid capture type '", captureType, "'. Must be 'calib' or 'scene'.");
+			Log::error("Error: filter requires an input .aedat4 file");
 			logUsage(argv);
 			return EXIT_FAILURE;
 		}
 
 		try
 		{
-			Session session = loadOrCreateSessionInParent(parentPathStr, sessionName);
+			std::filesystem::path inputAedat4 = argv[2];
+			if (!inputAedat4.is_absolute())
+			{
+				const std::filesystem::path cwdPath = std::filesystem::absolute(inputAedat4);
+				inputAedat4 = std::filesystem::exists(cwdPath) ? cwdPath : (std::filesystem::path(PROJECT_ROOT_DIR) / inputAedat4);
+			}
+			inputAedat4 = inputAedat4.lexically_normal();
+
+			if (!std::filesystem::is_regular_file(inputAedat4) || inputAedat4.extension() != ".aedat4")
+			{
+				Log::error("Error: Input must be an existing .aedat4 file: ", inputAedat4.string());
+				return EXIT_FAILURE;
+			}
+
+			const std::filesystem::path rawDir = inputAedat4.parent_path();
+			const std::filesystem::path outputAedat4 = rawDir / (inputAedat4.stem().string() + "_filtered.aedat4");
+
+			Aedat4Filter::FilterOptions options;
+			options.chain = {
+				{Aedat4Filter::FilterStage::BACKGROUND_ACTIVITY, dv::Duration(3000)},
+				{Aedat4Filter::FilterStage::HOT_PIXEL},
+				//{Aedat4Filter::FilterStage::FAST_DECAY, dv::Duration(10000)}
+			};
+			options.hotPixelOptions.autoDetect = true;
+			options.hotPixelOptions.nStdDev = 4.0;
+
+			const Aedat4Filter::StereoCameraNames cameraNames = Aedat4Filter::readStereoCameraNames(rawDir);
+			return Aedat4Filter::filterStereoRecording(inputAedat4, outputAedat4, cameraNames, options);
+		}
+		catch (const std::exception &e)
+		{
+			Log::error("Error: ", e.what());
+			return EXIT_FAILURE;
+		}
+	}
+	else if (command == "record")
+	{		
+		std::string sessionPathArg;
+		std::string captureName;
+		std::string captureType;
+		bool visualize = false;
+
+		// First non-flag arg is session path (optional)
+		int i = 2;
+		if (i < argc && argv[i][0] != '-')
+			sessionPathArg = argv[i++];
+
+		for (; i < argc; ++i)
+		{
+			std::string arg = argv[i];
+			if (arg == "-v" || arg == "--visualize") visualize = true;
+			else if ((arg == "-n" || arg == "--name") && i + 1 < argc) captureName = argv[++i];
+			else if ((arg == "-t" || arg == "--type") && i + 1 < argc) captureType = argv[++i];
+		}
+
+		if (captureType.empty() || (captureType != "calib" && captureType != "scene"))
+		{
+			Log::error("Error: Must specify -t calib or -t scene");
+			logUsage(argv);
+			return EXIT_FAILURE;
+		}
+
+		try
+		{
+			std::filesystem::path sessionPath = sessionPathArg.empty() 
+				? std::filesystem::current_path() 
+				: std::filesystem::absolute(sessionPathArg);
+
+			Session session = Session::isValidSession(sessionPath)
+				? Session::load(sessionPath)
+				: (std::filesystem::create_directories(sessionPath), 
+				   Session::create(sessionPath.parent_path(), sessionPath.filename().string()));
 
 			CaptureType type = (captureType == "calib") ? CaptureType::CALIBRATION : CaptureType::SCENE;
 			std::filesystem::path captureDir = session.createCapture(type, captureName);
@@ -222,21 +186,22 @@ int main (int argc, char *argv[])
 	}
 	else if (command == "calibrate")
 	{
-		std::string sessionPathStr;
-		std::string captureName;
+		if (argc < 3)
+		{
+			Log::error("Error: calibrate requires capture path");
+			logUsage(argv);
+			return EXIT_FAILURE;
+		}
+
+		std::string capturePathArg = argv[2];
 		std::string targetType;
-
 		int cols = 0, rows = 0;
-		float param3 = 0.0f; // tagSize, rowSpacing or spacing
-		float param4 = 0.0f; // tagSpacing, colSpacing or asymmetric flag
-
+		float param3 = 0.0f, param4 = 0.0f;
 		bool configProvided = false;
 
-		for (int i = 2; i < argc; ++i) 
+		for (int i = 3; i < argc; ++i) 
 		{
 			std::string arg = argv[i];
-			if ((arg == "-s" || arg == "--session") && i + 1 < argc) sessionPathStr = argv[++i];
-			if ((arg == "-c" || arg == "--capture") && i + 1 < argc) captureName = argv[++i];
 			if ((arg == "-t" || arg == "--target") && i + 1 < argc) targetType = argv[++i];
 			if ((arg == "--config") && i + 4 < argc)
 			{
@@ -255,40 +220,30 @@ int main (int argc, char *argv[])
 			}
 		}
 
-		if (sessionPathStr.empty())
-		{
-			Log::error("Error: Calibrate requires -s (session path).");
-			logUsage(argv);
-			return EXIT_FAILURE;
-		}
-
-		if (captureName.empty())
-		{
-			Log::error("Error: Calibrate requires -c (capture name).");
-			logUsage(argv);
-			return EXIT_FAILURE;
-		}
-
 		try
 		{
-			Session session = loadSessionFromPath(sessionPathStr);
-			std::filesystem::path captureDir = session.getCaptureDir(captureName);
+			std::filesystem::path capturePath = std::filesystem::absolute(capturePathArg);
+			if (!std::filesystem::exists(capturePath))
+			{
+				Log::error("Error: Capture path does not exist: ", capturePath.string());
+				return EXIT_FAILURE;
+			}
+
+			Session session = Session::load(Session::findSessionRoot(capturePath));
+			std::string captureName = capturePath.filename().string();
 			
-			std::filesystem::path rawDir = Session::getRawDir(captureDir);
-			std::filesystem::path intermediateDir = Session::getIntermediateDir(captureDir);
-			std::filesystem::path framesDir = Session::getFramesDir(captureDir);
+			std::filesystem::path framesDir = Session::getFramesDir(capturePath);
 			std::filesystem::path configDir = session.getTargetsDir();
 
 			if (!std::filesystem::exists(framesDir))
 			{
-				Log::error("Invalid capture: 'frames' directory missing in ", captureDir.string());
+				Log::error("Invalid capture: 'frames' directory missing in ", capturePath.string());
 				Log::error("Run 'sert render' first to generate frames.");
 				return EXIT_FAILURE;
 			}
 
-			// check for existing target config in session config/targets/
+			// check for existing target config
 			bool configExists = false;
-			std::filesystem::path existingTargetPath;
 			if (std::filesystem::exists(configDir))
 			{
 				for (const auto& entry : std::filesystem::directory_iterator(configDir))
@@ -297,7 +252,6 @@ int main (int argc, char *argv[])
 					if (filename == "aprilgrid.yaml" || filename == "checkerboard.yaml" || filename == "circlegrid.yaml")
 					{
 						configExists = true;
-						existingTargetPath = entry.path();
 						Log::info("Found existing calibration target config: ", entry.path().string());
 						break;
 					}
@@ -312,7 +266,6 @@ int main (int argc, char *argv[])
 			}
 
 			std::filesystem::create_directories(configDir);
-
 			Log::info("Initialized calibration for capture: ", captureName);
 
 			// write target config if provided
@@ -320,57 +273,41 @@ int main (int argc, char *argv[])
 			{
 				if (targetType == "aprilgrid")
 				{
-					std::ofstream calibrationConfig(configDir / "aprilgrid.yaml");
-					calibrationConfig << "target_type: 'aprilgrid'" << "\n";
-					calibrationConfig << "tagCols: " << cols << "\n";
-					calibrationConfig << "tagRows: " << rows << "\n";
-					calibrationConfig << "tagSize: " << param3 << "\n";
-					calibrationConfig << "tagSpacing: " << param4 << "\n";
-					calibrationConfig.close();
+					std::ofstream cfg(configDir / "aprilgrid.yaml");
+					cfg << "target_type: 'aprilgrid'\ntagCols: " << cols << "\ntagRows: " << rows 
+					    << "\ntagSize: " << param3 << "\ntagSpacing: " << param4 << "\n";
 				}
 				else if (targetType == "checkerboard") 
 				{
-					std::ofstream calibrationConfig(configDir / "checkerboard.yaml");
-					calibrationConfig << "target_type: 'checkerboard'" << "\n";
-					calibrationConfig << "targetCols: " << cols << "\n";
-					calibrationConfig << "targetRows: " << rows << "\n";
-					calibrationConfig << "rowSpacingMeters: " << param3 << "\n";
-					calibrationConfig << "colSpacingMeters: " << param4 << "\n";
-					calibrationConfig.close();
+					std::ofstream cfg(configDir / "checkerboard.yaml");
+					cfg << "target_type: 'checkerboard'\ntargetCols: " << cols << "\ntargetRows: " << rows 
+					    << "\nrowSpacingMeters: " << param3 << "\ncolSpacingMeters: " << param4 << "\n";
 				}
 				else if (targetType == "circlegrid") 
 				{
-					std::ofstream calibrationConfig(configDir / "circlegrid.yaml");
-					calibrationConfig << "target_type: 'circlegrid'" << "\n";
-					calibrationConfig << "targetCols: " << cols << "\n";
-					calibrationConfig << "targetRows: " << rows << "\n";
-					calibrationConfig << "spacingMeters: " << param3 << "\n";
-					bool asymmetricGrid = static_cast<bool>(param4);
-					asymmetricGrid == 0 ? calibrationConfig << "asymmetricGrid: False" << "\n" : calibrationConfig << "asymmetricGrid: True" << "\n"; 
-					calibrationConfig.close();
+					std::ofstream cfg(configDir / "circlegrid.yaml");
+					cfg << "target_type: 'circlegrid'\ntargetCols: " << cols << "\ntargetRows: " << rows 
+					    << "\nspacingMeters: " << param3 << "\nasymmetricGrid: " << (param4 ? "True" : "False") << "\n";
 				}
 				else 
 				{
-					Log::error("Target type for calibration has to be one of 3: aprilgrid, checkerboard, circlegrid");
-					logUsage(argv);
+					Log::error("Target type must be: aprilgrid, checkerboard, or circlegrid");
 					return EXIT_FAILURE;
 				}
 			}
 
-			// run calibration
-			if (Calib::createRosBag(captureDir) != EXIT_SUCCESS)
+			if (Calib::createRosBag(capturePath) != EXIT_SUCCESS)
 			{
 				Log::error("Failed to create ROS bag for calibration.");
 				return EXIT_FAILURE;
 			}
 
-			if (Calib::run(session, captureDir) != EXIT_SUCCESS)
+			if (Calib::run(session, capturePath) != EXIT_SUCCESS)
 			{
 				Log::error("Calibration failed.");
 				return EXIT_FAILURE;
 			}
 
-			// auto-activate calibration on success
 			try
 			{
 				session.setActiveCalibration(captureName);
@@ -389,34 +326,24 @@ int main (int argc, char *argv[])
 	}
 	else if (command == "set-calibration")
 	{
-		std::string sessionPathStr;
-		std::string calibName;
-
-		for (int i = 2; i < argc; ++i) 
+		if (argc < 3)
 		{
-			std::string arg = argv[i];
-			if ((arg == "-s" || arg == "--session") && i + 1 < argc) sessionPathStr = argv[++i];
-			if ((arg == "-c" || arg == "--calibration") && i + 1 < argc) calibName = argv[++i];
-		}
-
-		if (sessionPathStr.empty())
-		{
-			Log::error("Error: set-calibration requires -s (session path).");
-			logUsage(argv);
-			return EXIT_FAILURE;
-		}
-
-		if (calibName.empty())
-		{
-			Log::error("Error: set-calibration requires -c (calibration name).");
+			Log::error("Error: set-calibration requires calibration path");
 			logUsage(argv);
 			return EXIT_FAILURE;
 		}
 
 		try
 		{
-			Session session = loadSessionFromPath(sessionPathStr);
-			session.setActiveCalibration(calibName);
+			std::filesystem::path calibPath = std::filesystem::absolute(argv[2]);
+			if (!std::filesystem::exists(calibPath))
+			{
+				Log::error("Error: Calibration path does not exist: ", calibPath.string());
+				return EXIT_FAILURE;
+			}
+
+			Session session = Session::load(Session::findSessionRoot(calibPath));
+			session.setActiveCalibration(calibPath.filename().string());
 		}
 		catch (const std::exception& e)
 		{
@@ -436,58 +363,44 @@ void logUsage(char* argv[])
 {
 	const std::string cmd = argv[0];
 	Log::info(
-		"Usage: ", cmd, " <command> [options]\n\n",
+		"Usage: ", cmd, " <command> [args]\n\n",
 
 		"Commands:\n",
-		"  record           Record events to a calibration or scene capture\n",
-		"  render           Process raw events into frames using E2VID\n",
-		"  calibrate        Run Kalibr to compute camera intrinsics/extrinsics\n",
-		"  set-calibration  Set the active calibration for a session\n",
+		"  record [<session>] -t calib|scene [-n <name>] [-v]\n",
+		"      Record to calibration or scene capture\n",
+		"      <session>  Session directory (default: current directory)\n",
+		"                 Creates session if it doesn't exist\n",
+		"      -t         Capture type: 'calib' or 'scene' (required)\n",
+		"      -n         Custom capture name (optional)\n",
+		"      -v         Enable live preview (optional)\n\n",
 
-		"record Options:\n",
-		"  -p, --parent <dir>    (Required) Parent directory for session creation\n",
-		"  -s, --session <name>  (Optional) Session name (prefix session_ is always added)\n",
-		"                        Default: session_<timestamp>\n",
-		"  -t, --type <type>     (Required) Capture type: 'calib' or 'scene'\n",
-		"  -n, --name <name>     (Optional) Custom capture name (default: auto-generated)\n",
-		"  -v, --visualize       (Optional) Enable live preview window\n\n",
+		"  render <capture>\n",
+		"      Generate frames from events using E2VID\n",
+		"      <capture>  Path to capture directory (tab-completable)\n\n",
 
-		"render Options:\n",
-		"  -s, --session <path>  (Required) Session directory path (must contain session.yaml)\n",
-		"  -c, --capture <name>  (Required) Capture name (e.g., calib_01, scene_2024-01-26)\n\n",
+		"  filter <recording.aedat4>\n",
+		"      apply (hardcoded for now) event filter chain\n",
+		"      Writes *_filtered.aedat4 next to input file\n\n",
 
-		"calibrate Options:\n",
-		"  -s, --session <path>  (Required) Session directory path (must contain session.yaml)\n",
-		"  -c, --capture <name>  (Required) Calibration capture name (e.g., calib_01)\n",
-		"  -t, --target <type>   (Optional*) Target type: 'aprilgrid', 'checkerboard', 'circlegrid'\n",
-		"  --config <args>       (Optional*) Target configuration parameters\n",
-		"                        *Required if no existing config in <session>/config/targets/\n\n",
-		"    Target config arguments:\n",
-		"    'aprilgrid':    <tagCols> <tagRows> <tagSize(m)> <tagSpacingRatio>\n",
-		"    'checkerboard': <targetCols> <targetRows> <rowSpacing(m)> <colSpacing(m)>\n",
-		"    'circlegrid':   <targetCols> <targetRows> <spacing(m)> <asymmetric(0/1)>\n\n",
+		"  calibrate <capture> [-t <target> --config <args>]\n",
+		"      Run Kalibr calibration on capture\n",
+		"      <capture>  Path to calibration capture\n",
+		"      -t         Target type: aprilgrid, checkerboard, circlegrid\n",
+		"      --config   Target config (required if no existing config):\n",
+		"                   aprilgrid:    <cols> <rows> <tagSize> <tagSpacing>\n",
+		"                   checkerboard: <cols> <rows> <rowSpacing> <colSpacing>\n",
+		"                   circlegrid:   <cols> <rows> <spacing> <asymmetric 0/1>\n\n",
 
-		"set-calibration Options:\n",
-		"  -s, --session <path>      (Required) Session directory path (must contain session.yaml)\n",
-		"  -c, --calibration <name>  (Required) Calibration capture name to set as active\n\n",
-
-		"Session Structure:\n",
-		"  <session>/\n",
-		"  ├── session.yaml              # Session metadata and active calibration\n",
-		"  ├── config/\n",
-		"  │   ├── targets/              # Calibration target definitions\n",
-		"  │   └── esvo/                 # ESVO configuration files\n",
-		"  ├── calibrations/             # Calibration captures\n",
-		"  │   └── <name>/raw/, intermediate/, frames/, stereo_frames-camchain.yaml\n",
-		"  ├── scenes/                   # Scene captures\n",
-		"  │   └── <name>/raw/, intermediate/, frames/, reconstruction/esvo/\n",
-		"  └── logs/                     # (planned) Session logs\n\n",
+		"  set-calibration <calibration>\n",
+		"      Set active calibration for session\n",
+		"      <calibration>  Path to calibration directory\n\n",
 
 		"Examples:\n",
-		"  ", cmd, " record -p . -s lab -t calib -n test\n",
-		"  ", cmd, " render -s ./session_lab -c test\n",
-		"  ", cmd, " calibrate -s ./session_lab -c test -t checkerboard --config 7 5 0.043 0.043\n",
-		"  ", cmd, " record -p ./data -s lab -t scene -n desk_test\n",
-		"  ", cmd, " set-calibration -s ./data/session_lab -c calib_01\n"
+		"  ", cmd, " record -t calib                    # Record calib in current session\n",
+		"  ", cmd, " record lab -t scene -n outdoor     # Create 'lab/' and record scene\n",
+		"  ", cmd, " render lab/calibrations/calib_01   # Generate frames (tab-complete!)\n",
+		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4\n",
+		"  ", cmd, " calibrate lab/calibrations/calib_01 -t checkerboard --config 8 6 0.068 0.068\n",
+		"  ", cmd, " set-calibration lab/calibrations/calib_01\n"
 	);
 }

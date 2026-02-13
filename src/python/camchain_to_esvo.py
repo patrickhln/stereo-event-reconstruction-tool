@@ -192,28 +192,28 @@ def convert_camchain_to_esvo(camchain_path, raw_dir, output_dir):
     print(f"\nESVO calibration written to: {output_dir}")
 
 def main():
-    # TODO change this to use the session.yaml folder strategy later, for now, manual input
     parser = argparse.ArgumentParser(
         description="Convert Kalibr camchain to ESVO calibration format"
     )
-    parser.add_argument(
-        "--camchain",
-        required=True,
-        help="Path to Kalibr stereo_frames-camchain.yaml"
-    )
-    parser.add_argument(
-        "--raw",
-        required=True,
-        help="Path to raw folder for camera_metadata.txt"
-    )
-    parser.add_argument(
-        "--output",
-        required=True,
-        help="Output directory for left.yaml and right.yaml"
-    )
-    
+    parser.add_argument("calibration_path", help="Path to calibration directory")
     args = parser.parse_args()
-    convert_camchain_to_esvo(args.camchain, args.raw,args.output)
+    
+    calib = os.path.abspath(args.calibration_path)
+    camchain = next((os.path.join(calib, f) for f in ["stereo_frames-camchain.yaml", "camchain.yaml"] if os.path.exists(os.path.join(calib, f))), None)
+    if not camchain:
+        raise FileNotFoundError(f"No camchain.yaml in {calib}")
+    
+    # find session root and output
+    current = calib
+    while current != os.path.dirname(current):
+        if os.path.exists(os.path.join(current, "session.yaml")):
+            output = os.path.join(current, "config", "esvo")
+            break
+        current = os.path.dirname(current)
+    else:
+        raise FileNotFoundError(f"No session.yaml found above {calib}")
+    
+    convert_camchain_to_esvo(camchain, os.path.join(calib, "raw"), output)
 
 
 if __name__ == "__main__":
