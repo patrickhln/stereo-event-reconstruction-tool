@@ -1,3 +1,4 @@
 [submodule "rpg_e2vid"]
 	path = rpg_e2vid
 	url = git@github.com:patrickhln/rpg_e2vid.git
+	branch = xpu-support
