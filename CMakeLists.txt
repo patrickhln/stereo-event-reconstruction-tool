@@ -23,6 +23,8 @@ set(SOURCE_FILES
 
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
+add_executable(aedat4_stereo_preview src/cpp/Aedat4StereoPreview.cpp)
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE
 SCRIPTS_DIR="${CMAKE_SOURCE_DIR}/scripts/"
 PROJECT_ROOT_DIR="${CMAKE_SOURCE_DIR}"
@@ -51,8 +53,11 @@ target_link_libraries(${PROJECT_NAME}
 	dv::processing
 	yaml-cpp::yaml-cpp
 )
+target_link_libraries(aedat4_stereo_preview
+	${OpenCV_LIBS}
+	dv::processing
+)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Werror)
-
-
-
+target_compile_features(aedat4_stereo_preview PRIVATE cxx_std_17)
+target_compile_options(aedat4_stereo_preview PRIVATE -Wall -Wextra -Werror)
