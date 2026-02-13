@@ -152,14 +152,14 @@ namespace FrameGen
 			return EXIT_FAILURE;
 		}
 
-		std::string command = "conda run -n sert-python python3 " + e2vidPath.string() + " "
+		std::string command = "conda run --no-capture-output -n sert-python python3 -u " + e2vidPath.string() + " "
 							+ "--path_to_model " + modelPath.string() + " "
 							+ "--input_file " + eventFile.string() + " "
 							+ "--output_folder " + outputDir.string() + " "
 							+ "--dataset_name " + datasetName + " "
 							+ "--fixed_duration "
-							+ "--window_duration 50 " // 50ms
-							+ "--no-normalize";
+							+ "--window_duration 33.33"; // 33.33ms
+							// + "--auto_hdr";
 							// + "--display ";
 
 		Log::info("Executing: ", command);
