@@ -324,7 +324,7 @@ echo "Running ESVO in Docker..."
 #     -v "$LAUNCH_FILE:/esvo_launch.launch:ro" \
 #     -v "$RUNNER_SCRIPT:/esvo_runner.sh:ro" \
 #     -v "$SRC_PYTHON/publish_camera_info.py:/scripts/publish_camera_info.py:ro" \
-#     sert-ros:latest \
+#     sert-esvo-kalibr:latest \
 #     bash /esvo_runner.sh
 
 docker run --rm -it \
@@ -338,7 +338,7 @@ docker run --rm -it \
     -v "$LAUNCH_FILE:/esvo_launch.launch:ro" \
     -v "$RUNNER_SCRIPT:/esvo_runner.sh:ro" \
     -v "$SRC_PYTHON/publish_camera_info.py:/scripts/publish_camera_info.py:ro" \
-    sert-ros:latest \
+    sert-esvo-kalibr:latest \
     bash /esvo_runner.sh
 
 # Cleanup

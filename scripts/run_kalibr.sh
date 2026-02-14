@@ -58,7 +58,7 @@ docker run --rm \
 	-v "$SESSION_PATH:/session:ro" \
 	-v "$CAPTURE_DIR:/capture" \
 	-w /capture \
-	sert-ros:latest \
+	sert-esvo-kalibr:latest \
 	/bin/bash -c "
 	rosrun kalibr kalibr_calibrate_cameras \
 		--target $TARGET_FILE \
@@ -84,4 +84,4 @@ docker run --rm \
 # -e MPLBACKEND=Agg: Even with --dont-show-report, Kalibr uses matplotlib to draw PDF, 
 # MPLBACKEND=Agg forces Anti-Grain Gemotry backend which is purely for saving files (headless)
 
-# --approx-sync 0.02 default as of docker run --rm sert-ros:latest rosrun kalibr kalibr_calibrate_cameras (returns help message)
+# --approx-sync 0.02 default as of docker run --rm sert-esvo-kalibr:latest rosrun kalibr kalibr_calibrate_cameras (returns help message)

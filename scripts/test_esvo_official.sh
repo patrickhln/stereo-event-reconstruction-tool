@@ -99,7 +99,7 @@ mkdir -p "$OUTPUT_DIR/pcd_tmp"
 echo "Extracting configuration for profile '$PROFILE' from Docker image..."
 
 # Create a temporary container to copy files from
-CONTAINER_ID=$(docker create sert-ros:latest)
+CONTAINER_ID=$(docker create sert-esvo-kalibr:latest)
 
 # Function to clean up on error found during config extraction
 cleanup_container() {
@@ -305,7 +305,7 @@ docker run --rm -it \
     -v "$LAUNCH_FILE:/esvo_launch.launch:ro" \
     -v "$RUNNER_SCRIPT:/esvo_runner.sh:ro" \
     -v "$PROJECT_ROOT/src/python/publish_camera_info.py:/scripts/publish_camera_info.py:ro" \
-    sert-ros:latest \
+    sert-esvo-kalibr:latest \
     bash /esvo_runner.sh "$PLAYBACK_RATE"
 
 rm -f "$LAUNCH_FILE" "$RUNNER_SCRIPT"

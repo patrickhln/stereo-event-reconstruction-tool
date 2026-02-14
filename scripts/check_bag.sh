@@ -5,5 +5,5 @@ BAG_DIR=$(dirname "$BAG_PATH")
 BAG_NAME=$(basename "$BAG_PATH")
 docker run --rm \
     -v "$BAG_DIR:/data:ro" \
-    sert-ros:latest \
+    sert-esvo-kalibr:latest \
     rosbag info "/data/$BAG_NAME"
