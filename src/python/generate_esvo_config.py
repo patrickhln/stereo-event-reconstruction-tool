@@ -1,16 +1,49 @@
-"""
-Generate:
-    mapping.yaml
-    tracking.yaml
-    ts_parameters.yaml
+"""Generate ESVO mapping/tracking/time-surface config files.
+
+These presets are tuned for this repo's offline workflows.
+See src/python/esvo_tuning_notes.md for rationale and caveats.
 """
 import os
 import argparse
 import yaml
 import numpy as np
 
+SENSOR_PROFILES = {
+    'davis346': {
+        'width': 346,
+        'height': 260,
+        'max_eps': 12e6,
+        'decay_ms': 30,
+        'ts_queue': 20,
+    },
+    'dvxplorer': {
+        'width': 640,
+        'height': 480,
+        'max_eps': 165e6,
+        'decay_ms': 18,
+        'ts_queue': 10,
+        'tracking_rate_hz': 100,
+        'mapping_rate_hz': 20,
+        'tracking_ts_history': 80,
+        'mapping_ts_history': 24,
+        'batch_size': 200,
+        'process_event_num': 5500,
+    },
+}
+
+def detect_sensor_profile(width, height):
+    pixels = width * height
+    if pixels <= 346 * 260 * 1.2:
+        return SENSOR_PROFILES['davis346']
+    else:
+        return SENSOR_PROFILES['dvxplorer']
+
+
+def is_dvxplorer_profile(profile):
+    return profile['max_eps'] > 50e6
+
 def load_esvo_calib(esvo_dir):
-    """Load ESVO calibration files from the esvo config directory."""
+    """Load left/right ESVO calibration YAML files."""
     with open(os.path.join(esvo_dir, "left.yaml"), "r") as f:
         left = yaml.safe_load(f)
     with open(os.path.join(esvo_dir, "right.yaml"), "r") as f:
@@ -29,166 +62,129 @@ def compute_focal_length(left_calib):
     fy = K[1, 1]
     return (fx + fy) / 2
 
-def generate_mapping_config(output_path, width, baseline, focal_length, min_depth=0.5, max_depth=10.0):
-    """
-    mapping.yaml computed parameters based on ESVO/esvo_core/cfg/mapping/mapping_rpg.yaml
-    
-    Disparity calculation strategy:
-    - Official ESVO uses max_disparity=40, min_disparity=1 for all configs (RPG, HKUST, UPenn)
-    - These configs target DAVIS240C (240x180) cameras
-    - For higher resolution, we scale proportionally but cap conservatively
-    - ESVO's block matching can be unstable with very large disparity ranges
-    """
-    # Reference: Official ESVO configs use these values for DAVIS240C (240px width)
-    OFFICIAL_MAX_DISPARITY = 40
-    OFFICIAL_MIN_DISPARITY = 1
-    OFFICIAL_WIDTH = 240
+def generate_mapping_config(output_path, width, height, baseline, focal_length, min_depth=0.5, max_depth=5.0):
+    """Generate mapping.yaml."""
+    profile = detect_sensor_profile(width, height)
+    is_dvxplorer = is_dvxplorer_profile(profile)
 
-    # Scale factor for current resolution
-    scale_factor = width / OFFICIAL_WIDTH
-
-    # Computed disparity from geometry: d = baseline * focal_length / depth
     computed_max_disp = baseline * focal_length / min_depth
     computed_min_disp = baseline * focal_length / max_depth
 
-    # Strategy:
-    # - Use geometry-computed disparity for the requested depth range.
-    # - Apply a conservative cap scaled from DAVIS to keep matching stable.
+    scaled_cap = int(np.floor(0.25 * width))
 
-    scaled_official_max = int(OFFICIAL_MAX_DISPARITY * scale_factor)
+    min_disparity = max(1, int(np.floor(0.95 * computed_min_disp)))
+    max_disparity = min(int(np.ceil(1.05 * computed_max_disp)), scaled_cap)
 
-    # Apply conservative bounds
-    min_disparity = max(OFFICIAL_MIN_DISPARITY, int(computed_min_disp))
-    max_disparity = min(int(computed_max_disp), scaled_official_max)
+    if max_disparity - min_disparity < 24:
+        max_disparity = min(min_disparity + 48, scaled_cap)
 
-    # Ensure valid range (max > min with reasonable margin) when possible
-    if min_disparity + 20 <= scaled_official_max:
-        max_disparity = max(max_disparity, min_disparity + 20)
-
-    # Compute actual depth range achievable with these disparity bounds
-    actual_min_depth = baseline * focal_length / max_disparity
-    actual_max_depth = baseline * focal_length / max(min_disparity, 1)
-
-    # Warn if we're significantly limiting the requested depth range
-    if actual_min_depth > min_depth * 1.2:
-        print(f"NOTE: Disparity capped at {max_disparity} (scaled from official {OFFICIAL_MAX_DISPARITY})")
-        print(f"      Actual min depth: {actual_min_depth:.2f}m (requested: {min_depth:.2f}m)")
+    if is_dvxplorer:
+        patch_x = 21
+        patch_y = 11
+    else:
+        patch_scale = width / 346.0
+        patch_x = int(15 * patch_scale)
+        patch_y = int(7 * patch_scale)
+        if patch_x % 2 == 0:
+            patch_x += 1
+        if patch_y % 2 == 0:
+            patch_y += 1
+        patch_x = max(15, min(patch_x, 31))
+        patch_y = max(7, min(patch_y, 15))
 
     inv_depth_min = 1.0 / max_depth
     inv_depth_max = 1.0 / min_depth
-    is_high_res = width >= 480
-
-    # patch size for DAVID346 was 15x7 (resolution 346x260)
-    # patch size for higher-res sensors scaled proportionally:
-    scale = width / 346.0
-    patch_x = int(15 * scale)
-    patch_y = int(7 * scale)
-
-    # keep odd
-    if patch_x % 2 == 0:
-        patch_x += 1
-    if patch_y % 2 == 0:
-        patch_y += 1
-
-    # clamp to reasonable bounds
-    patch_x = max(15, min(patch_x, 31))
-    patch_y = max(7, min(patch_y, 15))
 
     config = {
-        # depth range (computed from user settings)
         'invDepth_min_range': round(inv_depth_min, 2),
         'invDepth_max_range': round(inv_depth_max, 2),
-        
-        # visualization thresholds 
-        'residual_vis_threshold': 20,
-        'stdVar_vis_threshold': 0.1,  
+
+        'residual_vis_threshold': 14 if is_dvxplorer else 20,
+        'stdVar_vis_threshold': 0.015 if is_dvxplorer else 0.15,
         'age_max_range': 10,
-        'age_vis_threshold': 1,
-        
-        # fusion - use CONST_POINTS like official configs
+        'age_vis_threshold': 0 if is_dvxplorer else 1,
+
         'fusion_radius': 0,
-        'FUSION_STRATEGY': 'CONST_POINTS',
-        'maxNumFusionFrames': 40,
-        'maxNumFusionPoints': 8000 if is_high_res else 5000,
-        
-        # processing
-        'Denoising': True,
+        'FUSION_STRATEGY': 'CONST_FRAMES' if is_dvxplorer else 'CONST_POINTS',
+        'maxNumFusionFrames': 14 if is_dvxplorer else 40,
+        'maxNumFusionPoints': 8000 if is_dvxplorer else 5000,
+
+        'Denoising': False if is_dvxplorer else True,
         'SmoothTimeSurface': False,
         'Regularization': True,
-        
-        # visualization
+
         'bVisualizeGlobalPC': True,
         'visualizeGPC_interval': 3,
-        'NumGPC_added_per_refresh': 1000,
+        'NumGPC_added_oper_refresh': 1500,  # note: ESVO source has typo "oper" not "per"
         'visualize_range': min(max_depth, 5.0),
-        
-        # core parameters
-        'PROCESS_EVENT_NUM': 2000 if is_high_res else 1000,
-        'TS_HISTORY_LENGTH': 100,
-        'INIT_SGM_DP_NUM_THRESHOLD': 600 if is_high_res else 500,
-        'mapping_rate_hz': 20,
-        
-        # patch size 
+
+        'PROCESS_EVENT_NUM': profile.get('process_event_num', 1000),
+        'MAX_NUM_Event_INVOLVED': 60000 if is_dvxplorer else 10000,
+        'TS_HISTORY_LENGTH': profile.get('mapping_ts_history', 100),
+        'INIT_SGM_DP_NUM_THRESHOLD': 500,
+        'mapping_rate_hz': profile.get('mapping_rate_hz', 20),
+
         'patch_size_X': patch_x,
         'patch_size_Y': patch_y,
-        
-        # optimization
+
         'Lnorm': 'Tdist',
         'Tdist_nu': 2.1897,
         'Tdist_scale': 16.6397,
         'Tdist_stdvar': 56.5347,
-        
-        # block matching (disparity computed from depth range)
-        'BM_half_slice_thickness': 0.001,
+
+        'BM_half_slice_thickness': 0.0015 if is_dvxplorer else 0.001,
         'BM_min_disparity': min_disparity,
         'BM_max_disparity': max_disparity,
         'BM_step': 1,
-        'BM_ZNCC_Threshold': 0.1,
+        'BM_ZNCC_Threshold': 0.13 if is_dvxplorer else 0.1,
         'BM_bUpDownConfiguration': False,
     }
 
     with open(output_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
+    actual_min_depth = baseline * focal_length / max_disparity
+    actual_max_depth = baseline * focal_length / max(min_disparity, 1)
+
     print(f"Written mapping config: {output_path}")
-    print(f"  - Disparity range: {min_disparity} - {max_disparity}")
+    print(f"  - Sensor profile: {'DVXplorer' if is_dvxplorer else 'DAVIS'}")
+    print(f"  - Disparity range: {min_disparity} - {max_disparity} (geometry: {computed_min_disp:.1f} - {computed_max_disp:.1f})")
+    print(f"  - Actual depth range: {actual_min_depth:.2f}m - {actual_max_depth:.2f}m")
     print(f"  - Inv depth range: {inv_depth_min:.2f} - {inv_depth_max:.2f}")
     print(f"  - Patch size: {patch_x}x{patch_y}")
+    print(f"  - mapping_rate_hz: {config['mapping_rate_hz']}")
+    print(f"  - BM_step: {config['BM_step']}")
     
 
-def generate_tracking_config(output_path, width, min_depth=0.5, max_depth=10.0):
-    """
-    tracking.yaml based on ESVO/esvo_core/cfg/tracking/tracking_hkust.yaml
-    
-    IMPORTANT: Tracking uses FIXED 1x1 patch size for image registration,
-    unlike mapping which uses larger patches
-    """
+def generate_tracking_config(output_path, width, height, min_depth=0.5, max_depth=5.0):
+    """Generate tracking.yaml."""
+    profile = detect_sensor_profile(width, height)
+    is_dvxplorer = is_dvxplorer_profile(profile)
+
     inv_depth_min = 1.0 / max_depth
     inv_depth_max = 1.0 / min_depth
-    is_high_res = width >= 480
     
     config = {
         'invDepth_min_range': round(inv_depth_min, 2),
         'invDepth_max_range': round(inv_depth_max, 2),
         
-        'TS_HISTORY_LENGTH': 100,
-        'REF_HISTORY_LENGTH': 10,
-        'tracking_rate_hz': 100,  # Must be faster than mapping_rate_hz to avoid race condition
+        'TS_HISTORY_LENGTH': profile.get('tracking_ts_history', 100),
+        'REF_HISTORY_LENGTH': 5 if is_dvxplorer else 10,
+        'tracking_rate_hz': profile.get('tracking_rate_hz', 100),
         
-        # tracking parameters 
-        'patch_size_X': 1,  # MUST be 1 for tracking (not scaled!)
-        'patch_size_Y': 1,  # MUST be 1 for tracking (not scaled!)
+        'patch_size_X': 1,
+        'patch_size_Y': 1,
         'kernelSize': 5,
         
-        'MAX_REGISTRATION_POINTS': 4000,
-        'BATCH_SIZE': 500,
-        'MAX_ITERATION': 10,
+        'MAX_REGISTRATION_POINTS': 4000 if is_dvxplorer else 2000,
+        'BATCH_SIZE': profile.get('batch_size', 200),
+        'MAX_ITERATION': 15 if is_dvxplorer else 10,
         
         'LSnorm': 'Huber',
-        'huber_threshold': 50,
-        'MIN_NUM_EVENTS': 800 if is_high_res else 1000,
+        'huber_threshold': 25 if is_dvxplorer else 50,
+        'MIN_NUM_EVENTS': 1500 if is_dvxplorer else 1000,
         
-        'RegProblemType': 1,  # 1=analytical (faster and more stable)
+        'RegProblemType': 1,
         
         'SAVE_TRAJECTORY': True,
         'SEQUENCE_NAME': 'reconstruction',
@@ -200,27 +196,34 @@ def generate_tracking_config(output_path, width, min_depth=0.5, max_depth=10.0):
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     
     print(f"Written tracking config: {output_path}")
+    print(f"  - tracking_rate_hz: {config['tracking_rate_hz']}")
+    print(f"  - MIN_NUM_EVENTS: {config['MIN_NUM_EVENTS']}")
+    print(f"  - BATCH_SIZE: {config['BATCH_SIZE']}")
+    print(f"  - huber_threshold: {config['huber_threshold']}")
 
 
-def generate_ts_parameters(output_path):
-    """
-    ts_parameters.yaml based on ESVO/esvo_core/cfg/time_surface/ts_parameters.yaml
-    """
+def generate_ts_parameters(output_path, width, height):
+    """Generate ts_parameters.yaml."""
+    profile = detect_sensor_profile(width, height)
+    is_dvxplorer = is_dvxplorer_profile(profile)
+
     config = {
         'use_sim_time': True,
         'ignore_polarity': True,
-        'time_surface_mode': 0,  # 0=backward, 1=forward
-        'decay_ms': 20,
-        'median_blur_kernel_size': 1,
-        'max_event_queue_len': 20,
+        'time_surface_mode': 0,
+        'decay_ms': profile['decay_ms'],
+        'median_blur_kernel_size': 0 if is_dvxplorer else 1,
+        'max_event_queue_len': profile['ts_queue'],
     }
     
     with open(output_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     
     print(f"Written time surface config: {output_path}")
+    print(f"  - decay_ms: {config['decay_ms']} (effective window: ~{config['decay_ms'] * 5}ms at 1% threshold)")
+    print(f"  - max_event_queue_len: {config['max_event_queue_len']}")
 
-def generate_all_configs(session_path, min_depth=0.5, max_depth=10.0):
+def generate_all_configs(session_path, min_depth=0.5, max_depth=5.0):
     esvo_config_dir = os.path.join(session_path, "config", "esvo")
 
 
@@ -243,27 +246,37 @@ def generate_all_configs(session_path, min_depth=0.5, max_depth=10.0):
     print(f"Baseline: {baseline:.4f} m")
     print(f"Focal length: {focal_length:.2f} px")
     print(f"Depth range: {min_depth} - {max_depth} m")
+    
+    profile = detect_sensor_profile(width, height)
+    eps_density = profile['max_eps'] / (width * height)
+    print(f"Sensor profile: {'DVXplorer' if profile['max_eps'] > 50e6 else 'DAVIS'} "
+          f"(max {profile['max_eps']/1e6:.0f}M eps, {eps_density:.0f} eps/pixel)")
     print()
 
     generate_mapping_config(
         os.path.join(esvo_config_dir, 'mapping.yaml'),
-        width, baseline, focal_length, min_depth, max_depth
+        width, height, baseline, focal_length, min_depth, max_depth
     )
     
     generate_tracking_config(
         os.path.join(esvo_config_dir, 'tracking.yaml'),
-        width, min_depth, max_depth
+        width, height, min_depth, max_depth
     )
     
     generate_ts_parameters(
-        os.path.join(esvo_config_dir, 'ts_parameters.yaml')
+        os.path.join(esvo_config_dir, 'ts_parameters.yaml'),
+        width, height
     )
     
     print(f"\nAll configs written to: {esvo_config_dir}")
+    print(f"\nRecommended playback rate for this sensor: "
+          f"{'0.06' if profile['max_eps'] > 50e6 else '0.2'}")
     
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Generate ESVO configuration files tuned for the detected sensor type."
+    )
     parser.add_argument(
         "--session", required=True, help="Path to session directory"
     )
@@ -276,8 +289,8 @@ def main():
     parser.add_argument(
         "--max-depth",
         type=float,
-        default=10.0,
-        help="Maximum expected scene depth in meters (default: 10.0)"
+        default=5.0,
+        help="Maximum expected scene depth in meters (default: 5.0)"
     )
     
     args = parser.parse_args()

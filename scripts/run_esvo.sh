@@ -6,7 +6,7 @@ set -e
 #
 # Options:
 #   --no-viz        Run without visualization (headless)
-#   --rate <r>      Bag playback rate (default: 0.2)
+#   --rate <r>      Bag playback rate (default: 0.06)
 #   --save-pc       Save final pointcloud to file
 #   --gpu <mode>    GPU mode: auto|intel|amd|nvidia|cpu (default: auto)
 
@@ -36,7 +36,7 @@ SRC_PYTHON="$PROJECT_ROOT/src/python"
 
 # Defaults
 VISUALIZE=true
-PLAYBACK_RATE=0.1  # Lower rate prevents timestamp gaps that crash ESVO's buggy reset handling
+PLAYBACK_RATE=0.06  # DVXplorer-safe default on (my) laptop CPU
 SAVE_PC=false
 GPU_MODE=auto
 
@@ -54,8 +54,7 @@ echo "=== ESVO Runner ==="
 echo "Session: $SESSION_PATH"
 echo "Scene:   $SCENE_DIR"
 
-# --- 1. Environment Setup ---
-# Try to source conda if available to use sert-python for config generation
+# try to source conda if available to use sert-python for config generation
 if command -v conda >/dev/null 2>&1; then
     eval "$(conda shell.bash hook)"
     if conda env list | grep -q "sert-python"; then
@@ -64,8 +63,6 @@ if command -v conda >/dev/null 2>&1; then
         echo "Warning: 'sert-python' env not found. Using system python."
     fi
 fi
-
-# --- 2. Input/Config Verification & Generation ---
 
 ESVO_CONFIG_DIR="$SESSION_PATH/config/esvo"
 BAG_FILE="$SCENE_DIR/intermediate/scene_events.bag"
@@ -78,7 +75,7 @@ fi
 
 mkdir -p "$ESVO_CONFIG_DIR"
 
-# Check if calibration files exist, if not, generate them
+# check if calibration files exist, if not, generate them
 if [[ ! -f "$ESVO_CONFIG_DIR/left.yaml" ]] || [[ ! -f "$ESVO_CONFIG_DIR/right.yaml" ]]; then
     echo "Generating ESVO calibration files (left.yaml, right.yaml)..."
     
@@ -102,23 +99,47 @@ if [[ ! -f "$ESVO_CONFIG_DIR/left.yaml" ]] || [[ ! -f "$ESVO_CONFIG_DIR/right.ya
         --output "$ESVO_CONFIG_DIR"
 fi
 
-# Check if runtime configs exist, if not, generate them
-if [[ ! -f "$ESVO_CONFIG_DIR/mapping.yaml" ]] || [[ ! -f "$ESVO_CONFIG_DIR/tracking.yaml" ]]; then
-    echo "Generating ESVO runtime configs (mapping.yaml, tracking.yaml)..."
-    python3 "$SRC_PYTHON/generate_esvo_config.py" \
-        --session "$SESSION_PATH" \
-        --min-depth 0.5 \
-        --max-depth 10.0
-fi
+# always regenerate runtime configs so tuning changes in generate_esvo_config.py
+# are applied without manually deleting old YAML files.
+echo "Generating ESVO runtime configs (mapping.yaml, tracking.yaml, ts_parameters.yaml)..."
+python3 "$SRC_PYTHON/generate_esvo_config.py" \
+    --session "$SESSION_PATH" \
+    --min-depth 0.5 \
+    --max-depth 5.0
 
-# --- 3. Prepare Docker Launch ---
+# Read tracking rate from generated tracking.yaml to keep /sync aligned.
+TRACKING_RATE_HZ=$(python3 - <<PY
+import yaml
+with open("$ESVO_CONFIG_DIR/tracking.yaml", "r", encoding="utf-8") as f:
+    cfg = yaml.safe_load(f) or {}
+rate = cfg.get("tracking_rate_hz", 50)
+try:
+    rate = int(rate)
+except Exception:
+    rate = 50
+print(max(rate, 1))
+PY
+)
+
 
 OUTPUT_DIR="$SCENE_DIR/reconstruction/esvo"
 mkdir -p "$OUTPUT_DIR"
 
 # Create Launch File (Mapped to container paths)
 LAUNCH_FILE=$(mktemp /tmp/esvo_launch_XXXXXX.launch)
-SYNC_RATE=$(echo "$PLAYBACK_RATE * 100" | bc)
+# Sync rate (wall-clock Hz) = ceil(playback_rate * tracking_rate_hz)
+# Ceil avoids undersupplying time surfaces when the product is non-integer.
+SYNC_RATE=$(python3 - <<PY
+import math
+playback_rate = float("$PLAYBACK_RATE")
+tracking_rate = int("$TRACKING_RATE_HZ")
+print(max(1, int(math.ceil(playback_rate * tracking_rate))))
+PY
+)
+
+echo "Playback rate: $PLAYBACK_RATE"
+echo "Tracking rate: $TRACKING_RATE_HZ"
+echo "Sync rate: $SYNC_RATE"
 
 VIZ_NODES=""
 if [ "$VISUALIZE" = true ]; then
@@ -256,7 +277,7 @@ EOF
 
 chmod +x "$RUNNER_SCRIPT"
 
-# --- 4. Run Docker ---
+# run docker
 VIZ_ARGS=""
 if [ "$VISUALIZE" = true ]; then
     xhost +local:root 2>/dev/null || true
