@@ -77,6 +77,58 @@ def create_camera_info_msg(calib, timestamp_ns, typestore):
         roi=roi
     )
 
+def create_imu_msg(imu_sample, typestore):
+    """Create sensor_msgs/Imu message from a dv IMU sample."""
+    ImuMsg = typestore.types["sensor_msgs/msg/Imu"]
+    HeaderMsg = typestore.types["std_msgs/msg/Header"]
+    TimeMsg = typestore.types["builtin_interfaces/msg/Time"]
+    Vector3Msg = typestore.types["geometry_msgs/msg/Vector3"]
+    QuaternionMsg = typestore.types["geometry_msgs/msg/Quaternion"]
+    
+    # dv IMU timestamp is in microseconds
+    timestamp_us = imu_sample.timestamp
+    secs = int(timestamp_us // 1_000_000)
+    nsecs = int((timestamp_us % 1_000_000) * 1000)
+    
+    header = HeaderMsg(
+        seq=0,
+        stamp=TimeMsg(sec=secs, nanosec=nsecs),
+        frame_id="imu"
+    )
+    
+    # dv IMU provides gyroscope in deg/s and accelerometer in g.
+    deg2rad = np.pi / 180.0
+    g_to_mps2 = 9.81007
+
+    angular_velocity = Vector3Msg(
+        x=float(imu_sample.gyroscopeX * deg2rad),
+        y=float(imu_sample.gyroscopeY * deg2rad),
+        z=float(imu_sample.gyroscopeZ * deg2rad)
+    )
+    
+    linear_acceleration = Vector3Msg(
+        x=float(imu_sample.accelerometerX * g_to_mps2),
+        y=float(imu_sample.accelerometerY * g_to_mps2),
+        z=float(imu_sample.accelerometerZ * g_to_mps2)
+    )
+    
+    # No orientation data from raw IMU
+    orientation = QuaternionMsg(x=0.0, y=0.0, z=0.0, w=1.0)
+    
+    # Orientation is not provided by raw IMU.
+    orientation_unknown_cov = np.array([-1.0] + [0.0] * 8, dtype=np.float64)
+    measured_cov = np.zeros(9, dtype=np.float64)
+    
+    return ImuMsg(
+        header=header,
+        orientation=orientation,
+        orientation_covariance=orientation_unknown_cov,
+        angular_velocity=angular_velocity,
+        angular_velocity_covariance=measured_cov,
+        linear_acceleration=linear_acceleration,
+        linear_acceleration_covariance=measured_cov
+    )
+
 def create_event_array_msg(events, timestamp_ns, typestore, width, height):
     """Create EventArray message from EventStore using numpy for speed."""
     HeaderMsg = typestore.types["std_msgs/msg/Header"]
@@ -202,7 +254,7 @@ def chunk_events_by_time(recording, window_us=1000):
     
 
     
-def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=None):
+def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=None, with_imu=False):
     raw_dir = os.path.join(capture_dir, "raw")
     intermediate_dir = os.path.join(capture_dir, "intermediate")
 
@@ -228,6 +280,16 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
             print(f"Warning: Could not load calibration from {calib_dir}", flush=True)
 
     recording = dv.io.StereoCameraRecording(aedat4_path, left_cam, right_cam)
+    
+    # Check if IMU data is available when requested
+    imu_available = False
+    if with_imu:
+        left_reader = recording.getLeftReader()
+        if left_reader.isImuStreamAvailable():
+            imu_available = True
+            print("IMU data available - will be included in bag", flush=True)
+        else:
+            print("Warning: IMU data requested but not available in recording", flush=True)
 
     typestore = get_typestore(Stores.ROS1_NOETIC)
 
@@ -244,6 +306,7 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
     with Writer(output_path) as bag:
         EVENT_TYPE = "dvs_msgs/msg/EventArray"
         CAMERA_INFO_TYPE = "sensor_msgs/msg/CameraInfo"
+        IMU_TYPE = "sensor_msgs/msg/Imu"
 
         connection_left = bag.add_connection(
           topic="/davis/left/events",
@@ -270,9 +333,19 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
                 msgtype=typestore.types[CAMERA_INFO_TYPE].__msgtype__,
                 typestore=typestore
             )
+        
+        # add IMU connection if requested and available
+        imu_conn = None
+        if imu_available:
+            imu_conn = bag.add_connection(
+                topic="/davis/left/imu",
+                msgtype=typestore.types[IMU_TYPE].__msgtype__,
+                typestore=typestore
+            )
 
         msg_count = 0
         cam_info_count = 0
+        imu_count = 0
         t0 = time.time()
         last_print = 0.0
         last_cam_info_us = 0
@@ -281,6 +354,21 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
         # get time range from left camera for ETA calculation
         start_us, end_us = recording.getLeftReader().getTimeRange()
         total_us = end_us - start_us
+        
+        # Pre-extract all IMU data if available (IMU is typically small enough to fit in memory)
+        imu_data = []
+        imu_idx = 0
+        if imu_available:
+            print("Extracting IMU data...", flush=True)
+            # Need to reopen the recording to get fresh reader for IMU
+            left_reader_imu = dv.io.MonoCameraRecording(aedat4_path, left_cam)
+            while True:
+                imu_batch = left_reader_imu.getNextImuBatch()
+                if imu_batch is None:
+                    break
+                for sample in imu_batch:
+                    imu_data.append(sample)
+            print(f"Found {len(imu_data)} IMU samples", flush=True)
 
         for timestamp_us, left_events, right_events in chunk_events_by_time(recording, window_us):
             timestamp_ns = int(timestamp_us) * 1000
@@ -308,6 +396,18 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
                 right_msg = create_event_array_msg(right_events, timestamp_ns, typestore, width, height)
                 right_bytes = typestore.serialize_ros1(right_msg, EVENT_TYPE)
                 bag.write(connection_right, timestamp_ns, bytes(right_bytes))
+            
+            # Write IMU data for this time window
+            if imu_conn and imu_data:
+                window_end_us = timestamp_us + window_us
+                while imu_idx < len(imu_data) and imu_data[imu_idx].timestamp < window_end_us:
+                    imu_sample = imu_data[imu_idx]
+                    imu_msg = create_imu_msg(imu_sample, typestore)
+                    imu_bytes = typestore.serialize_ros1(imu_msg, IMU_TYPE)
+                    imu_timestamp_ns = int(imu_sample.timestamp) * 1000
+                    bag.write(imu_conn, imu_timestamp_ns, bytes(imu_bytes))
+                    imu_idx += 1
+                    imu_count += 1
 
             msg_count += 1
             now = time.time()
@@ -319,7 +419,8 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
                 last_print = now
         print()
 
-    print(f"Done! Created {output_path} with {msg_count} event message pairs", flush=True)
+    imu_msg = f", {imu_count} IMU messages" if imu_count > 0 else ""
+    print(f"Done! Created {output_path} with {msg_count} event message pairs{imu_msg}", flush=True)
 
 def register_dvs_msgs(typestore):
     # Define the message types as they appear in dvs_msgs
@@ -347,28 +448,12 @@ def main():
     parser.add_argument("--path", required=True, help="Path to capture directory (contains raw/stereo_recording.aedat4)")
     parser.add_argument("--window-ms", type=float, default=1.0, help="Time window for event chunking in ms (default: 1.0 (ESVO))")
     parser.add_argument("--calibration", help="Path to ESVO calibration directory containing left.yaml and right.yaml")
+    parser.add_argument("--with-imu", action="store_true", help="Include IMU data in bag (for ESVO2 visual-inertial mode)")
 
     args = parser.parse_args()
     
-    calib = args.calibration
-    if not calib:
-        # auto-detect from session.yaml
-        current = os.path.abspath(args.path)
-        while current != os.path.dirname(current):
-            session_yaml = os.path.join(current, "session.yaml")
-            if os.path.exists(session_yaml):
-                with open(session_yaml) as f:
-                    session = yaml.safe_load(f)
-                    active_calib = session.get("active_calibration")
-                    if active_calib:
-                        calib = os.path.join(current, "config", "esvo")
-                        break
-                break
-            current = os.path.dirname(current)
-    
-    convert_aedat4_to_bag(args.path, args.window_ms, calib_dir=calib)
+    convert_aedat4_to_bag(args.path, args.window_ms, calib_dir=args.calibration, with_imu=args.with_imu)
 
 if __name__ == "__main__":
     main()
         
-

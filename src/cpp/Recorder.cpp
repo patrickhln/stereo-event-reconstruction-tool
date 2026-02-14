@@ -62,6 +62,24 @@ namespace StereoRecorder
 		Log::info("Left camera (master):  ", leftCamera->getCameraName());
 		Log::info("Right camera (slave):  ", rightCamera->getCameraName());
 
+		const bool leftHasEventStream = leftCamera->isEventStreamAvailable();
+		const bool leftHasFrameStream = leftCamera->isFrameStreamAvailable();
+		const bool leftHasImuStream = leftCamera->isImuStreamAvailable();
+		const bool leftHasTriggerStream = leftCamera->isTriggerStreamAvailable();
+		const bool rightHasEventStream = rightCamera->isEventStreamAvailable();
+		const bool rightHasFrameStream = rightCamera->isFrameStreamAvailable();
+		const bool rightHasImuStream = rightCamera->isImuStreamAvailable();
+		const bool rightHasTriggerStream = rightCamera->isTriggerStreamAvailable();
+
+		auto yesNo = [](const bool value) {
+			return value ? "yes" : "no";
+		};
+		Log::info("Left streams available  (events/frame/imu/triggers): ",
+			yesNo(leftHasEventStream), "/", yesNo(leftHasFrameStream), "/", yesNo(leftHasImuStream), "/", yesNo(leftHasTriggerStream));
+		Log::info("Right streams available (events/frame/imu/triggers): ",
+			yesNo(rightHasEventStream), "/", yesNo(rightHasFrameStream), "/", yesNo(rightHasImuStream), "/", yesNo(rightHasTriggerStream));
+		Log::info("Streams that will be recorded follow the same availability mask above.");
+
 
 		// temporal, change to consistent load function
 		std::filesystem::path camMetaFilePath = rawDir / "camera_metadata.txt";
@@ -113,8 +131,6 @@ namespace StereoRecorder
 		// https://gitlab.com/inivation/dv/dv-processing/-/blob/master/samples/io/stereo-live-writer/stereo-live-writer.cpp#L26
 		dv::io::DataReadHandler leftHandler, rightHandler;
 
-		// TODO: ADD IMU for Kalibr
-
 		leftHandler.mEventHandler = [&](const dv::EventStore &events) 
 		{
 			// Priority 1: write events
@@ -137,21 +153,21 @@ namespace StereoRecorder
 				visQueueCondition.notify_one();
 			}
 		};
-		// if (leftCamera->isFrameStreamAvailable())
-		// {
-		// 	leftHandler.mFrameHandler = [&](const dv::Frame &frame)
-		// 	{
-		// 		writer.left.writeFrame(frame);
-		// 	};
-		// }
-		if (leftCamera->isImuStreamAvailable()) 
+		if (leftHasFrameStream)
+		{
+			leftHandler.mFrameHandler = [&](const dv::Frame &frame)
+			{
+				writer.left.writeFrame(frame);
+			};
+		}
+		if (leftHasImuStream) 
 		{
 				leftHandler.mImuHandler = [&](const dv::IMUPacket &imu)
 				{
 					writer.left.writeImuPacket(imu);
 				};
 		}
-		if (leftCamera->isTriggerStreamAvailable()) 
+		if (leftHasTriggerStream) 
 		{
 				leftHandler.mTriggersHandler = [&](const dv::TriggerPacket &triggers)
 				{
@@ -179,14 +195,21 @@ namespace StereoRecorder
 				visQueueCondition.notify_one();
 			}
 		};
-		if (rightCamera->isImuStreamAvailable()) 
+		if (rightHasFrameStream)
+		{
+			rightHandler.mFrameHandler = [&](const dv::Frame &frame)
+			{
+				writer.right.writeFrame(frame);
+			};
+		}
+		if (rightHasImuStream) 
 		{
 				rightHandler.mImuHandler = [&](const dv::IMUPacket &imu)
 				{
 					writer.right.writeImuPacket(imu);
 				};
 		}
-		if (rightCamera->isTriggerStreamAvailable()) 
+		if (rightHasTriggerStream) 
 		{
 				rightHandler.mTriggersHandler = [&](const dv::TriggerPacket &triggers)
 				{

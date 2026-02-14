@@ -132,8 +132,41 @@ namespace Aedat4Filter
 				Log::info("Hot pixels detected - left: ", masks.leftHotPixelCount, ", right: ", masks.rightHotPixelCount);
 			}
 
-			dv::io::MonoCameraWriter::Config leftConfig = dv::io::MonoCameraWriter::EventOnlyConfig(cameraNames.leftCameraName, leftResolution.value());
-			dv::io::MonoCameraWriter::Config rightConfig = dv::io::MonoCameraWriter::EventOnlyConfig(cameraNames.rightCameraName, rightResolution.value());
+			const bool leftHasFrames = recording.getLeftReader().isFrameStreamAvailable();
+			const bool rightHasFrames = recording.getRightReader().isFrameStreamAvailable();
+			const bool leftHasImu = recording.getLeftReader().isImuStreamAvailable();
+			const bool rightHasImu = recording.getRightReader().isImuStreamAvailable();
+			const bool leftHasTriggers = recording.getLeftReader().isTriggerStreamAvailable();
+			const bool rightHasTriggers = recording.getRightReader().isTriggerStreamAvailable();
+
+			dv::io::MonoCameraWriter::Config leftConfig(cameraNames.leftCameraName);
+			leftConfig.addEventStream(leftResolution.value());
+			if (leftHasFrames)
+			{
+				const std::optional<cv::Size> leftFrameResolution = recording.getLeftReader().getFrameResolution();
+				if (leftFrameResolution.has_value())
+				{
+					leftConfig.addFrameStream(leftFrameResolution.value());
+				}
+			}
+			if (leftHasImu) { leftConfig.addImuStream(); }
+			if (leftHasTriggers)
+			{ leftConfig.addTriggerStream(); }
+
+			dv::io::MonoCameraWriter::Config rightConfig(cameraNames.rightCameraName);
+			rightConfig.addEventStream(rightResolution.value());
+			if (rightHasFrames)
+			{
+				const std::optional<cv::Size> rightFrameResolution = recording.getRightReader().getFrameResolution();
+				if (rightFrameResolution.has_value())
+				{
+					rightConfig.addFrameStream(rightFrameResolution.value());
+				}
+			}
+			if (rightHasImu)
+			{ rightConfig.addImuStream(); }
+			if (rightHasTriggers)
+			{ rightConfig.addTriggerStream(); }
 			dv::io::StereoCameraWriter writer(outputAedat4, leftConfig, rightConfig);
 
 			dv::EventFilterChain<> leftFilter = createFilterChain(leftResolution.value(), options, leftHotPixelMask);
@@ -148,8 +181,15 @@ namespace Aedat4Filter
 			{
 				const std::optional<dv::EventStore> leftBatch = recording.getLeftReader().getNextEventBatch();
 				const std::optional<dv::EventStore> rightBatch = recording.getRightReader().getNextEventBatch();
+				const std::optional<dv::Frame> leftFrame = leftHasFrames ? recording.getLeftReader().getNextFrame() : std::nullopt;
+				const std::optional<dv::Frame> rightFrame = rightHasFrames ? recording.getRightReader().getNextFrame() : std::nullopt;
+				const std::optional<std::vector<dv::IMU>> leftImuBatch = leftHasImu ? recording.getLeftReader().getNextImuBatch() : std::nullopt;
+				const std::optional<std::vector<dv::IMU>> rightImuBatch = rightHasImu ? recording.getRightReader().getNextImuBatch() : std::nullopt;
+				const std::optional<std::vector<dv::Trigger>> leftTriggerBatch = leftHasTriggers ? recording.getLeftReader().getNextTriggerBatch() : std::nullopt;
+				const std::optional<std::vector<dv::Trigger>> rightTriggerBatch = rightHasTriggers ? recording.getRightReader().getNextTriggerBatch() : std::nullopt;
 
-				if (!leftBatch.has_value() && !rightBatch.has_value())
+				if (!leftBatch.has_value() && !rightBatch.has_value() && !leftFrame.has_value() && !rightFrame.has_value()
+					&& !leftImuBatch.has_value() && !rightImuBatch.has_value() && !leftTriggerBatch.has_value() && !rightTriggerBatch.has_value())
 				{
 					break;
 				}
@@ -171,6 +211,24 @@ namespace Aedat4Filter
 					rightOutgoingEvents += filtered.size();
 					writer.right.writeEvents(filtered);
 				}
+
+				if (leftFrame.has_value())
+				{ writer.left.writeFrame(leftFrame.value()); }
+
+				if (rightFrame.has_value())
+				{ writer.right.writeFrame(rightFrame.value()); }
+
+				if (leftImuBatch.has_value())
+				{ writer.left.writeImu(leftImuBatch.value()); }
+
+				if (rightImuBatch.has_value())
+				{ writer.right.writeImu(rightImuBatch.value()); }
+
+				if (leftTriggerBatch.has_value())
+				{ writer.left.writeTriggers(leftTriggerBatch.value()); }
+
+				if (rightTriggerBatch.has_value())
+				{ writer.right.writeTriggers(rightTriggerBatch.value()); }
 			}
 
 			Log::info("Filtered stereo recording saved to: ", outputAedat4.string());
