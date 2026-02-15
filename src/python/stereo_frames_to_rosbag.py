@@ -2,6 +2,7 @@ import os
 import numpy as np
 import argparse
 import cv2
+import yaml
 from rosbags.typesys import Stores, get_typestore
 from rosbags.rosbag1 import Writer
 
@@ -52,8 +53,8 @@ def match_stereo_pairs(left_ts, right_ts, max_diff_ms=10.0):
     print(f"max_diff_occured: {max_diff_occured}")
     return pairs
 
-def create_image_msg(image_path, timestamp_sec, frame_id, seq, typestore):
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+def create_image_msg_from_array(img, timestamp_sec, frame_id, seq, typestore):
+    """Build a ROS Image message from a numpy array (already processed)."""
     height, width = img.shape
 
     secs = int(timestamp_sec)
@@ -79,15 +80,113 @@ def create_image_msg(image_path, timestamp_sec, frame_id, seq, typestore):
         data=np.frombuffer(img.tobytes(), dtype=np.uint8)
     )
 
-def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths):
+
+def create_image_msg(image_path, timestamp_sec, frame_id, seq, typestore):
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise RuntimeError(f"Failed to read image: {image_path}")
+    return create_image_msg_from_array(img, timestamp_sec, frame_id, seq, typestore)
+
+
+def load_camchain_for_camera_info(camchain_path):
+    with open(camchain_path, "r") as f:
+        camchain = yaml.safe_load(f)
+
+    cam0 = camchain["cam0"]
+    cam1 = camchain["cam1"]
+
+    width, height = cam0["resolution"]
+
+    fx0, fy0, cx0, cy0 = cam0["intrinsics"]
+    fx1, fy1, cx1, cy1 = cam1["intrinsics"]
+
+    K0 = np.array([[fx0, 0.0, cx0], [0.0, fy0, cy0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    K1 = np.array([[fx1, 0.0, cx1], [0.0, fy1, cy1], [0.0, 0.0, 1.0]], dtype=np.float64)
+    D0 = np.array(cam0["distortion_coeffs"], dtype=np.float64)
+    D1 = np.array(cam1["distortion_coeffs"], dtype=np.float64)
+
+    T_cn_cnm1 = np.array(cam1["T_cn_cnm1"], dtype=np.float64)
+    R = T_cn_cnm1[:3, :3]
+    T = T_cn_cnm1[:3, 3:4]
+
+    R0, R1, P0, P1, _, _, _ = cv2.stereoRectify(
+        K0, D0, K1, D1, (int(width), int(height)), R, T, flags=cv2.CALIB_ZERO_DISPARITY, alpha=0
+    )
+
+    return {
+        "left": {
+            "width": int(width),
+            "height": int(height),
+            "K": K0,
+            "D": D0,
+            "R": R0,
+            "P": P0,
+        },
+        "right": {
+            "width": int(width),
+            "height": int(height),
+            "K": K1,
+            "D": D1,
+            "R": R1,
+            "P": P1,
+        },
+    }
+
+
+def create_camera_info_msg(calib, timestamp_sec, frame_id, seq, typestore):
+    CameraInfoMsg = typestore.types["sensor_msgs/msg/CameraInfo"]
+    HeaderMsg = typestore.types["std_msgs/msg/Header"]
+    TimeMsg = typestore.types["builtin_interfaces/msg/Time"]
+    RegionOfInterestMsg = typestore.types["sensor_msgs/msg/RegionOfInterest"]
+
+    secs = int(timestamp_sec)
+    nsecs = int((timestamp_sec - secs) * 1e9)
+
+    header = HeaderMsg(
+        seq=seq,
+        stamp=TimeMsg(sec=secs, nanosec=nsecs),
+        frame_id=frame_id
+    )
+
+    roi = RegionOfInterestMsg(
+        x_offset=0,
+        y_offset=0,
+        height=0,
+        width=0,
+        do_rectify=False
+    )
+
+    return CameraInfoMsg(
+        header=header,
+        height=calib["height"],
+        width=calib["width"],
+        distortion_model="plumb_bob",
+        D=np.array(calib["D"], dtype=np.float64),
+        K=np.array(calib["K"], dtype=np.float64).reshape(-1),
+        R=np.array(calib["R"], dtype=np.float64).reshape(-1),
+        P=np.array(calib["P"], dtype=np.float64).reshape(-1),
+        binning_x=0,
+        binning_y=0,
+        roi=roi
+    )
+
+
+def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths,
+                 camera_calib=None):
 
     typestore = get_typestore(Stores.ROS1_NOETIC)
     IMAGE_TYPE = "sensor_msgs/msg/Image"
+    CAMERA_INFO_TYPE = "sensor_msgs/msg/CameraInfo"
+
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
     if os.path.exists(output_path):
         os.remove(output_path)
         print(f"Removed existing bag file: {output_path}")
 
+    calib_for_bag = camera_calib
     with Writer(output_path) as bag:
         connection_left = bag.add_connection(
             topic="/cam0/image_raw",
@@ -100,6 +199,20 @@ def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths):
             typestore=typestore
         )
 
+        connection_left_info = None
+        connection_right_info = None
+        if calib_for_bag is not None:
+            connection_left_info = bag.add_connection(
+                topic="/cam0/camera_info",
+                msgtype=typestore.types[CAMERA_INFO_TYPE].__msgtype__,
+                typestore=typestore
+            )
+            connection_right_info = bag.add_connection(
+                topic="/cam1/camera_info",
+                msgtype=typestore.types[CAMERA_INFO_TYPE].__msgtype__,
+                typestore=typestore
+            )
+
         for seq, (left_idx, right_idx, left_t, right_t) in enumerate(pairs):
             left_msg = create_image_msg(left_frames_paths[left_idx], left_t, "cam0", seq, typestore)
             right_msg = create_image_msg(right_frames_paths[right_idx], right_t, "cam1", seq, typestore)
@@ -109,15 +222,28 @@ def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths):
 
             bag.write(connection_left, int(left_t * 1e9), bytes(left_bytes))
             bag.write(connection_right, int(right_t * 1e9), bytes(right_bytes))
+
+            if calib_for_bag is not None:
+                assert connection_left_info is not None
+                assert connection_right_info is not None
+                left_info = create_camera_info_msg(calib_for_bag["left"], left_t, "cam0", seq, typestore)
+                right_info = create_camera_info_msg(calib_for_bag["right"], right_t, "cam1", seq, typestore)
+
+                left_info_bytes = typestore.serialize_ros1(left_info, CAMERA_INFO_TYPE)
+                right_info_bytes = typestore.serialize_ros1(right_info, CAMERA_INFO_TYPE)
+
+                bag.write(connection_left_info, int(left_t * 1e9), bytes(left_info_bytes))
+                bag.write(connection_right_info, int(right_t * 1e9), bytes(right_info_bytes))
             
             if (seq + 1) % 100 == 0:
                 print(f"Written {seq + 1}/{len(pairs)} pairs...")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert stereo frames to ROS bag for Kalibr calibration")
+    parser = argparse.ArgumentParser(description="Convert stereo frames to ROS bag")
     parser.add_argument("--path", required=True, help="Path to capture directory (should contain frames/left and frames/right)")
     parser.add_argument("--max_diff_ms", type=float, default=10.0, help="Max timestamp diff for matching timestamps of frames")
+    parser.add_argument("--camchain", default=None, help="Kalibr camchain yaml (required for camera_info)")
 
     args = parser.parse_args()
     
@@ -126,7 +252,20 @@ def main():
 
     pairs = match_stereo_pairs(left_timestamps, right_timestamps, args.max_diff_ms)
 
-    write_rosbag(os.path.join(args.path, "intermediate", "stereo_frames.bag"), pairs, left_frames_path_list, right_frames_path_list)
+    camera_calib = None
+    if args.camchain:
+        if not os.path.exists(args.camchain):
+            raise FileNotFoundError(f"Camchain file not found: {args.camchain}")
+        camera_calib = load_camchain_for_camera_info(args.camchain)
+        print(f"Loaded camera calibration from: {args.camchain}")
+
+    write_rosbag(
+        os.path.join(args.path, "intermediate", "stereo_frames.bag"),
+        pairs,
+        left_frames_path_list,
+        right_frames_path_list,
+        camera_calib=camera_calib,
+    )
 
 if __name__ == "__main__":
     main()
