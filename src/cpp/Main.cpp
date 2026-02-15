@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <string>
 #include <fstream>
+#include <vector>
 
 #include "Log.h"
 #include "Session.h"
@@ -44,6 +45,21 @@ int main (int argc, char *argv[])
 		try
 		{
 			std::filesystem::path capturePath = std::filesystem::absolute(argv[2]);
+			std::vector<std::string> e2vidArgs;
+			for (int i = 3; i < argc; ++i)
+			{
+				std::string arg = argv[i];
+				if (arg == "--")
+				{
+					for (++i; i < argc; ++i)
+					{
+						e2vidArgs.emplace_back(argv[i]);
+					}
+					break;
+				}
+				Log::error("Unknown render option: ", arg, ". Use '--' before E2VID args.");
+				return EXIT_FAILURE;
+			}
 			if (!std::filesystem::exists(capturePath))
 			{
 				Log::error("Error: Capture path does not exist: ", capturePath.string());
@@ -73,7 +89,7 @@ int main (int argc, char *argv[])
 				Log::error("Could not convert .aedat4 to .txt for further E2VID reconstruction. Aborting...");	
 				return EXIT_FAILURE;
 			}
-			if (FrameGen::recordingToVideo(intermediateDir, framesDir) != EXIT_SUCCESS)
+			if (FrameGen::recordingToVideo(intermediateDir, framesDir, e2vidArgs) != EXIT_SUCCESS)
 			{
 				Log::error("E2VID reconstruction failed. Aborting...");
 				return EXIT_FAILURE;
@@ -374,9 +390,11 @@ void logUsage(char* argv[])
 		"      -n         Custom capture name (optional)\n",
 		"      -v         Enable live preview (optional)\n\n",
 
-		"  render <capture>\n",
+		"  render <capture> [-- <e2vid_args...>]\n",
 		"      Generate frames from events using E2VID\n",
-		"      <capture>  Path to capture directory (tab-completable)\n\n",
+		"      <capture>  Path to capture directory\n",
+		"      --         Pass remaining args directly to rpg_e2vid/run_reconstruction.py\n",
+		"      		      -> E2VID args can be found at https://github.com/uzh-rpg/rpg_e2vid\n\n"
 
 		"  filter <recording.aedat4>\n",
 		"      apply (hardcoded for now) event filter chain\n",
@@ -398,7 +416,8 @@ void logUsage(char* argv[])
 		"Examples:\n",
 		"  ", cmd, " record -t calib                    # Record calib in current session\n",
 		"  ", cmd, " record lab -t scene -n outdoor     # Create 'lab/' and record scene\n",
-		"  ", cmd, " render lab/calibrations/calib_01   # Generate frames (tab-complete!)\n",
+		"  ", cmd, " render lab/calibrations/calib_01   # Generate frames (default settings)\n",
+		"  ", cmd, " render lab/calibrations/calib_01 -- --window_duration 20 --auto_hdr\n",
 		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4\n",
 		"  ", cmd, " calibrate lab/calibrations/calib_01 -t checkerboard --config 8 6 0.068 0.068\n",
 		"  ", cmd, " set-calibration lab/calibrations/calib_01\n"

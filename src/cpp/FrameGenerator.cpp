@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <vector>
 
 #include <dv-processing/core/core.hpp>
 #include <dv-processing/io/stereo_camera_recording.hpp>
@@ -11,6 +12,24 @@
 
 namespace FrameGen
 {
+	static std::string shellQuote(const std::string &value)
+	{
+		std::string quoted = "'";
+		for (char c : value)
+		{
+			if (c == '\'')
+			{
+				quoted += "'\\''";
+			}
+			else
+			{
+				quoted += c;
+			}
+		}
+		quoted += "'";
+		return quoted;
+	}
+
 	CameraMetadata readMetadata(const std::filesystem::path &directory)
 	{
 		std::filesystem::path metaPath = directory / "camera_metadata.txt";
@@ -128,7 +147,7 @@ namespace FrameGen
 	}
 
 
-	int runE2VID(const std::filesystem::path& eventFile, const std::filesystem::path& outputDir, const std::string& datasetName)
+	int runE2VID(const std::filesystem::path& eventFile, const std::filesystem::path& outputDir, const std::string& datasetName, const std::vector<std::string>& extraArgs)
 	{
 		std::filesystem::path e2vidPath = std::filesystem::path(PROJECT_ROOT_DIR) / "rpg_e2vid" / "run_reconstruction.py";
 		std::filesystem::path modelPath = std::filesystem::path(PROJECT_ROOT_DIR) / "rpg_e2vid" / "pretrained" / "E2VID_lightweight.pth.tar";
@@ -152,15 +171,19 @@ namespace FrameGen
 			return EXIT_FAILURE;
 		}
 
-		std::string command = "conda run --no-capture-output -n sert-python python3 -u " + e2vidPath.string() + " "
-							+ "--path_to_model " + modelPath.string() + " "
-							+ "--input_file " + eventFile.string() + " "
-							+ "--output_folder " + outputDir.string() + " "
-							+ "--dataset_name " + datasetName + " "
+		std::string command = "conda run --no-capture-output -n sert-python python3 -u " + shellQuote(e2vidPath.string()) + " "
+							+ "--path_to_model " + shellQuote(modelPath.string()) + " "
+							+ "--input_file " + shellQuote(eventFile.string()) + " "
+							+ "--output_folder " + shellQuote(outputDir.string()) + " "
+							+ "--dataset_name " + shellQuote(datasetName) + " "
 							+ "--fixed_duration "
-							+ "--window_duration 33.33"; // 33.33ms
-							// + "--auto_hdr";
+							+ "--window_duration 33.33 "; // 33.33ms
 							// + "--display ";
+
+		for (const auto &arg : extraArgs)
+		{
+			command += shellQuote(arg) + " ";
+		}
 
 		Log::info("Executing: ", command);
 
@@ -168,7 +191,7 @@ namespace FrameGen
 		return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 	
-	int recordingToVideo(const std::filesystem::path &intermediateDir, const std::filesystem::path &reconstructionDir)
+	int recordingToVideo(const std::filesystem::path &intermediateDir, const std::filesystem::path &reconstructionDir, const std::vector<std::string>& extraArgs)
 	{
 		
 		std::filesystem::path leftTxt = intermediateDir / "leftEvents.txt";	
@@ -176,12 +199,12 @@ namespace FrameGen
 		
 		Log::info("Starting E2VID Reconstruction...");
 
-		if (runE2VID(leftTxt, reconstructionDir, "left") != EXIT_SUCCESS)
+		if (runE2VID(leftTxt, reconstructionDir, "left", extraArgs) != EXIT_SUCCESS)
 		{
 			Log::error("E2VID failed for left camera");
 			return EXIT_FAILURE;
 		}
-		if (runE2VID(rightTxt, reconstructionDir, "right") != EXIT_SUCCESS)
+		if (runE2VID(rightTxt, reconstructionDir, "right", extraArgs) != EXIT_SUCCESS)
 		{
 			Log::error("E2VID failed for right camera");
 			return EXIT_FAILURE;
