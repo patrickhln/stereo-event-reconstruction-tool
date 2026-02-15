@@ -8,7 +8,7 @@
 ## 1. System Dependencies
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake git wget pciutils ffmpeg
+sudo apt install -y build-essential cmake git wget pciutils ffmpeg pcl-tools
 ```
 
 ## 2. DV-Processing

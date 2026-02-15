@@ -33,6 +33,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SRC_PYTHON="$PROJECT_ROOT/src/python"
+ESVO_LAUNCH_FILE="$SCRIPT_DIR/launch/esvo/offline_system.launch"
 
 # Defaults
 VISUALIZE=true
@@ -70,6 +71,11 @@ BAG_FILE="$SCENE_DIR/intermediate/scene_events.bag"
 if [[ ! -f "$BAG_FILE" ]]; then
     echo "Error: Bag file not found: $BAG_FILE"
     echo "Please ensure the dataset is processed (aedat4_to_bag) before running ESVO."
+    exit 1
+fi
+
+if [[ ! -f "$ESVO_LAUNCH_FILE" ]]; then
+    echo "Error: Launch file not found: $ESVO_LAUNCH_FILE"
     exit 1
 fi
 
@@ -125,8 +131,6 @@ PY
 OUTPUT_DIR="$SCENE_DIR/reconstruction/esvo"
 mkdir -p "$OUTPUT_DIR"
 
-# Create Launch File (Mapped to container paths)
-LAUNCH_FILE=$(mktemp /tmp/esvo_launch_XXXXXX.launch)
 # Sync rate (wall-clock Hz) = ceil(playback_rate * tracking_rate_hz)
 # Ceil avoids undersupplying time surfaces when the product is non-integer.
 SYNC_RATE=$(python3 - <<PY
@@ -141,70 +145,14 @@ echo "Playback rate: $PLAYBACK_RATE"
 echo "Tracking rate: $TRACKING_RATE_HZ"
 echo "Sync rate: $SYNC_RATE"
 
-VIZ_NODES=""
-if [ "$VISUALIZE" = true ]; then
-    VIZ_NODES='
-    <node pkg="rqt_gui" type="rqt_gui" name="rqt_gui" args="--perspective-file $(find esvo_core)/esvo_system.perspective" />
-    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find esvo_core)/esvo_system.rviz" />'
-fi
-
-cat > "$LAUNCH_FILE" <<EOF
-<launch>
-  <rosparam param="/use_sim_time">true</rosparam>
-
-  <!-- Node: TimeSurface Left -->
-  <node name="TimeSurface_left" pkg="esvo_time_surface" type="esvo_time_surface">
-    <remap from="events" to="/davis/left/events" />
-    <remap from="camera_info" to="/davis/left/camera_info" />
-    <remap from="time_surface" to="TS_left" />
-    <rosparam command="load" file="/esvo_config/ts_parameters.yaml" />
-  </node>
-
-  <!-- Node: TimeSurface Right -->
-  <node name="TimeSurface_right" pkg="esvo_time_surface" type="esvo_time_surface">
-    <remap from="events" to="/davis/right/events" />
-    <remap from="camera_info" to="/davis/right/camera_info" />
-    <remap from="time_surface" to="TS_right" />
-    <rosparam command="load" file="/esvo_config/ts_parameters.yaml" />
-  </node>
-
-  <!-- Node: Global Timer for Sync -->
-  <node name="global_timer" pkg="rostopic" type="rostopic" 
-        args="pub -s -r $SYNC_RATE /sync std_msgs/Time 'now' "/>
-
-  <!-- Node: ESVO Mapping -->
-  <node name="esvo_Mapping" pkg="esvo_core" type="esvo_Mapping" output="screen" required="true">
-    <remap from="time_surface_left" to="/TS_left" />
-    <remap from="time_surface_right" to="/TS_right" />
-    <remap from="stamped_pose" to="/esvo_tracking/pose_pub" />
-    <remap from="events_left" to="/davis/left/events" />
-    <remap from="events_right" to="/davis/right/events" />
-    <rosparam param="dvs_frame_id">"dvs"</rosparam>
-    <rosparam param="world_frame_id">"map"</rosparam>
-    <rosparam param="calibInfoDir">/esvo_config</rosparam>
-    <rosparam command="load" file="/esvo_config/mapping.yaml" />
-  </node>
-
-  <!-- Node: ESVO Tracking -->
-  <node name="esvo_Tracking" pkg="esvo_core" type="esvo_Tracking" output="screen" required="true">
-    <remap from="time_surface_left" to="/TS_left" />
-    <remap from="time_surface_right" to="/TS_right" />
-    <remap from="stamped_pose" to="/esvo_tracking/pose_pub" />
-    <remap from="events_left" to="/davis/left/events" />
-    <remap from="pointcloud" to="/esvo_mapping/pointcloud_local" />
-    <rosparam param="dvs_frame_id">"dvs"</rosparam>
-    <rosparam param="world_frame_id">"map"</rosparam>
-    <rosparam param="calibInfoDir">/esvo_config</rosparam>
-    <rosparam param="resultPath">/output</rosparam>
-    <rosparam command="load" file="/esvo_config/tracking.yaml" />
-  </node>
-
-  $VIZ_NODES
-</launch>
-EOF
-
 # Create Runner Script (for inside Docker)
 RUNNER_SCRIPT=$(mktemp /tmp/esvo_runner_XXXXXX.sh)
+
+cleanup_tmp_files() {
+    rm -f "$RUNNER_SCRIPT"
+}
+trap cleanup_tmp_files EXIT
+
 cat > "$RUNNER_SCRIPT" <<EOF
 #!/bin/bash
 set -e
@@ -224,7 +172,7 @@ PID_CAM=\$!
 sleep 1
 
 echo "Launching ESVO..."
-roslaunch /esvo_launch.launch &
+roslaunch /esvo_launch.launch enable_viz:=$VISUALIZE sync_rate:=$SYNC_RATE &
 PID_LAUNCH=\$!
 sleep 8
 
@@ -236,6 +184,7 @@ sleep 2
 if [ "$SAVE_PC" = "true" ]; then
     echo "Listening for Pointcloud..."
     mkdir -p /output/pcd_tmp
+    rm -f /output/pcd_tmp/*.pcd
     rosrun pcl_ros pointcloud_to_pcd input:=/esvo_mapping/pointcloud_global _prefix:="/output/pcd_tmp/pc_" &
     PID_PCD=\$!
 fi
@@ -335,13 +284,10 @@ docker run --rm -it \
     -v "$ESVO_CONFIG_DIR:/esvo_config:ro" \
     -v "$BAG_FILE:/data/input.bag:ro" \
     -v "$OUTPUT_DIR:/output" \
-    -v "$LAUNCH_FILE:/esvo_launch.launch:ro" \
+    -v "$ESVO_LAUNCH_FILE:/esvo_launch.launch:ro" \
     -v "$RUNNER_SCRIPT:/esvo_runner.sh:ro" \
     -v "$SRC_PYTHON/publish_camera_info.py:/scripts/publish_camera_info.py:ro" \
     sert-esvo-kalibr:latest \
     bash /esvo_runner.sh
-
-# Cleanup
-rm "$LAUNCH_FILE" "$RUNNER_SCRIPT"
 
 echo "Done. Results in $OUTPUT_DIR"
