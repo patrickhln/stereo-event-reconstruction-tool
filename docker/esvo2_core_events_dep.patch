@@ -1,0 +1,11 @@
+diff --git a/esvo2_core/package.xml b/esvo2_core/package.xml
+--- a/esvo2_core/package.xml
++++ b/esvo2_core/package.xml
+@@ -30,6 +30,7 @@
+   <depend>tf2_ros</depend>
+   <depend>roscpp</depend>
+   <depend>dynamic_reconfigure</depend>
++  <depend>events_repacking_tool</depend>
+ 
+   <!-- The export tag contains other, unspecified, tags -->
+   <export>

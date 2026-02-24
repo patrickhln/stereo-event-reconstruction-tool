@@ -1,0 +1,66 @@
+diff --git a/events_repacking_tool/CMakeLists.txt b/events_repacking_tool/CMakeLists.txt
+--- a/events_repacking_tool/CMakeLists.txt
++++ b/events_repacking_tool/CMakeLists.txt
+@@ -6,35 +6,41 @@
+ find_package(Eigen3 REQUIRED)
+ set(CMAKE_BUILD_TYPE DEBUG)
+ 
+-## Find catkin macros and libraries
+-## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
+-## is used, also find other catkin packages
+-find_package(catkin_simple REQUIRED COMPONENTS
++find_package(catkin REQUIRED COMPONENTS
+   rosbag
+   roscpp
+   rospy
+   std_msgs
++  dvs_msgs
+   message_generation
+ )
+ 
+ add_message_files(
+-   FILES
+-   V_ba_bg.msg
+-#   Message2.msg
+- )
+-catkin_simple()
++  FILES
++  V_ba_bg.msg
++)
++
++generate_messages(
++  DEPENDENCIES
++  std_msgs
++)
++
++catkin_package(
++  CATKIN_DEPENDS
++    message_runtime
++    roscpp
++    rospy
++    std_msgs
++    dvs_msgs
++)
++
++include_directories(
++  ${catkin_INCLUDE_DIRS}
++  ${EIGEN3_INCLUDE_DIR}
++)
+ 
+ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -O0")
+ 
+-# make the executable
+-
+-# install(TARGETS image_synchronizer
+-#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+-
+-cs_add_executable(EventMessageEditor src/EventMessageEditor.cpp)
+-target_link_libraries(EventMessageEditor ${catkin_LIBARIES}) 
+-
+-# generate_messages(
+-#    DEPENDENCIES
+-# #   geometry_msgs
+-#  )
++add_executable(EventMessageEditor src/EventMessageEditor.cpp)
++add_dependencies(EventMessageEditor ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
++target_link_libraries(EventMessageEditor ${catkin_LIBRARIES})

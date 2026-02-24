@@ -1,0 +1,102 @@
+# ROS Noetic (Ubuntu 20.04)
+FROM ros:noetic-ros-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-c"]
+
+# Base deps needed to build + run ESVO2 in here.
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    ca-certificates \
+    git wget curl \
+    build-essential cmake \
+    python3-pip python3-catkin-tools python3-osrf-pycommon python3-vcstool \
+    && add-apt-repository ppa:ubuntu-toolchain-r/test \
+    && add-apt-repository ppa:inivation-ppa/inivation \
+    && add-apt-repository ppa:kisak/turtle \
+    && apt-get update \
+    && apt-get install -y \
+    libeigen3-dev libboost-all-dev libsuitesparse-dev \
+    libblas-dev liblapack-dev \
+    libopencv-dev libpoco-dev libtbb-dev \
+    libyaml-cpp-dev \
+    libgoogle-glog-dev libgflags-dev \
+    libfmt-dev \
+    libcaer-dev \
+    ros-noetic-cv-bridge \
+    ros-noetic-image-transport \
+    ros-noetic-tf \
+    ros-noetic-tf2 \
+    ros-noetic-tf2-ros \
+    ros-noetic-camera-info-manager \
+    ros-noetic-image-view \
+    ros-noetic-resource-retriever \
+    ros-noetic-eigen-conversions \
+    ros-noetic-tf-conversions \
+    ros-noetic-image-geometry \
+    ros-noetic-pcl-ros \
+    ros-noetic-pcl-conversions \
+    ros-noetic-rviz \
+    ros-noetic-rqt-gui \
+    ros-noetic-rqt-image-view \
+    ros-noetic-rqt-reconfigure \
+    ros-noetic-dynamic-reconfigure \
+    ros-noetic-message-generation \
+    ros-noetic-message-runtime \
+    libgl1-mesa-dri libglx-mesa0 libegl1-mesa \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build Ceres from source so it uses this image's Eigen.
+# This avoids the strict Eigen version mismatch headache from Ubuntu's prebuilt Ceres.
+RUN cd /tmp && \
+    git clone --depth 1 --branch 2.1.0 https://github.com/ceres-solver/ceres-solver.git && \
+    cd ceres-solver && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+             -DBUILD_TESTING=OFF \
+             -DBUILD_EXAMPLES=OFF \
+             -DBUILD_BENCHMARKS=OFF && \
+    make -j4 && \
+    make install && \
+    ldconfig && \
+    cd / && rm -rf /tmp/ceres-solver
+
+WORKDIR /catkin_ws/src
+
+# Grab ESVO2 plus the repos listed in dependencies.yaml.
+RUN git clone https://github.com/NAIL-HNU/ESVO2.git && \
+    vcs-import < ESVO2/dependencies.yaml && \
+    git clone --depth 1 https://github.com/ethz-asl/catkin_boost_python_buildtool.git && \
+    git clone --depth 1 https://github.com/ethz-asl/numpy_eigen.git
+
+# Tell eigen_catkin to use system Eigen so everything shares one Eigen install.
+RUN printf 'set(USE_SYSTEM_EIGEN "ON")\n' > /catkin_ws/src/eigen_catkin/use-system-installation-of-eigen.cmake
+
+# Tiny upstream fix: events_repacking_tool does not export/generate msgs cleanly in catkin.
+COPY ./esvo2_events_repacking_tool.patch /catkin_ws/src/ESVO2/esvo2_events_repacking_tool.patch
+RUN cd /catkin_ws/src/ESVO2 && \
+    patch --verbose -p1 < esvo2_events_repacking_tool.patch
+
+# esvo2_core includes V_ba_bg msg headers, so declare events_repacking_tool explicitly.
+COPY ./esvo2_core_events_dep.patch /catkin_ws/src/ESVO2/esvo2_core_events_dep.patch
+RUN cd /catkin_ws/src/ESVO2 && \
+    patch --verbose -p1 < esvo2_core_events_dep.patch
+
+WORKDIR /catkin_ws
+
+RUN rosdep update || echo "rosdep already updated"
+
+RUN apt-get update && \
+    rosdep install --from-paths src --ignore-src -r -y && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
+    catkin init && \
+    catkin config --extend /opt/ros/noetic && \
+    catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release -DEigen3_DIR=/usr/share/eigen3/cmake && \
+    catkin build dvs_msgs dv_ros_msgs image_representation esvo2_core events_repacking_tool -j6"
+
+COPY ./entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

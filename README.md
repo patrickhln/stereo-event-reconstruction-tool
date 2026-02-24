@@ -49,7 +49,9 @@ sudo usermod -aG video,render $USER  # Needed for GPU OpenGL in Docker
 # For NVIDIA GPUs: install nvidia-container-toolkit on the host, then, for the run_esvo.sh use: --gpu nvidia
 # To be integrated into cli
 cd scripts
-./docker_build_esvo_kalibr.sh  # This might take a while! (~20min) 
+./docker_build_esvo_kalibr.sh  
+./docker_build_esvo2.sh
+# Building these images might take a while! 
 ```
 
 # Usage
