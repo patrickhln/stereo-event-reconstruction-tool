@@ -137,7 +137,7 @@ This project integrates the following third-party tools:
   - Requires `git clone --recursive` to initialize
 - **Kalibr**: Camera calibration toolbox - https://github.com/ethz-asl/kalibr
 - **ESVO**: Event-based Stereo Visual Odometry - https://github.com/HKUST-Aerial-Robotics/ESVO
-
+- **ESVO2**: Direct Visual-Intertial Odometry with Stereo Event Cameras: https://github.com/NAIL-HNU/ESVO2
 All components are automatically set up by the installation scripts. Original licenses and attributions are preserved.
 
 # ESVO Compatibility Note
