@@ -288,6 +288,26 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
         if left_reader.isImuStreamAvailable():
             imu_available = True
             print("IMU data available - will be included in bag", flush=True)
+            
+            imu_yaml_path = os.path.join(intermediate_dir, "imu.yaml")
+            if not os.path.exists(imu_yaml_path) or override:
+                # Hard code IMU parameters for now based on BMI160 datasheet, arbitrary values for random walk
+                imu_yaml_content = """
+                #Accelerometers
+                accelerometer_noise_density: 0.00177   #Noise density (continuous-time) (180 µg/√Hz * 10^-6 * 9.81) (m/s^2/√Hz)
+                accelerometer_random_walk:   0.0008    #Bias random walk (m/s^2) - static arbitrary value for now (need to calibrate using kalibr_allan)
+
+                #Gyroscopes
+                gyroscope_noise_density:     0.000122  #Noise density (continuous-time) (0.007 °/s/√Hz * (π / 180)) (rad/s/√Hz)
+                gyroscope_random_walk:       0.00003   #Bias random walk (rad/s) - static arbitrary value for now (need to calibrate using kalibr_allan)
+
+                rostopic:                    /davis/left/imu      #the IMU ROS topic
+                update_rate:                 800.0                #Hz (for discretization of the values above)
+                """
+                with open(imu_yaml_path, "w") as f:
+                    f.write(imu_yaml_content)
+                print(f"Generated default IMU parameters at {imu_yaml_path}", flush=True)
+
         else:
             print("Warning: IMU data requested but not available in recording", flush=True)
 
@@ -403,6 +423,11 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
                 while imu_idx < len(imu_data) and imu_data[imu_idx].timestamp < window_end_us:
                     imu_sample = imu_data[imu_idx]
                     imu_msg = create_imu_msg(imu_sample, typestore)
+                    # Note on timestamps: we are taking the IMU timestamp directly from the hardware sync.
+                    # Technically, Kalibr (camchain-imucam.yaml) calculates a tiny time_offset between when the 
+                    # camera sensor triggers and when the IMU data actually arrives over the bus, but for now 
+                    # we just assume perfect sync since ESVO2 doesnt directly parse a td param. 
+                    # For absolute max precision, we'd need to parse that yaml and subtract it from imu_timestamp_ns here
                     imu_bytes = typestore.serialize_ros1(imu_msg, IMU_TYPE)
                     imu_timestamp_ns = int(imu_sample.timestamp) * 1000
                     bag.write(imu_conn, imu_timestamp_ns, bytes(imu_bytes))
