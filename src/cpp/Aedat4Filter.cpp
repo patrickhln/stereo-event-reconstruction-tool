@@ -3,10 +3,14 @@
 #include "Log.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
+
+#include <yaml-cpp/yaml.h>
 
 #include <dv-processing/core/filters.hpp>
 #include <dv-processing/io/mono_camera_writer.hpp>
@@ -18,6 +22,70 @@
 
 namespace
 {
+	std::string toLower(std::string value)
+	{
+		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+			return static_cast<char>(std::tolower(c));
+		});
+		return value;
+	}
+
+	Aedat4Filter::FilterStage parseFilterStage(const std::string &name)
+	{
+		const std::string stage = toLower(name);
+		if (stage == "hot_pixel")
+		{
+			return Aedat4Filter::FilterStage::HOT_PIXEL;
+		}
+		if (stage == "roi")
+		{
+			return Aedat4Filter::FilterStage::ROI;
+		}
+		if (stage == "polarity")
+		{
+			return Aedat4Filter::FilterStage::POLARITY;
+		}
+		if (stage == "background_activity")
+		{
+			return Aedat4Filter::FilterStage::BACKGROUND_ACTIVITY;
+		}
+		if (stage == "fast_decay")
+		{
+			return Aedat4Filter::FilterStage::FAST_DECAY;
+		}
+		if (stage == "k_noise")
+		{
+			return Aedat4Filter::FilterStage::K_NOISE;
+		}
+
+		throw std::runtime_error("Unknown filter type: " + name);
+	}
+
+	std::optional<bool> parsePolarity(const std::string &value)
+	{
+		const std::string polarity = toLower(value);
+		if (polarity == "on" || polarity == "true")
+		{
+			return true;
+		}
+		if (polarity == "off" || polarity == "false")
+		{
+			return false;
+		}
+		if (polarity == "both")
+		{
+			return std::nullopt;
+		}
+
+		throw std::runtime_error("Invalid polarity. Use: on, off, both.");
+	}
+
+	bool stageNeedsTimeWindow(const Aedat4Filter::FilterStage stage)
+	{
+		return stage == Aedat4Filter::FilterStage::BACKGROUND_ACTIVITY || stage == Aedat4Filter::FilterStage::FAST_DECAY
+			|| stage == Aedat4Filter::FilterStage::K_NOISE;
+	}
+
 	bool chainContains(const std::vector<Aedat4Filter::FilterStep> &chain, const Aedat4Filter::FilterStage stage)
 	{
 		return std::any_of(chain.begin(), chain.end(), [stage](const Aedat4Filter::FilterStep &step) {
@@ -94,6 +162,96 @@ namespace Aedat4Filter
 		}
 
 		return names;
+	}
+
+	FilterOptions loadFilterOptionsFromYaml(const std::filesystem::path &yamlPath)
+	{
+		YAML::Node config;
+		try
+		{
+			config = YAML::LoadFile(yamlPath.string());
+		}
+		catch (const YAML::Exception &e)
+		{
+			throw std::runtime_error("Failed to parse filter config '" + yamlPath.string() + "': " + e.what());
+		}
+
+		if (!config["chain"] || !config["chain"].IsSequence() || config["chain"].size() == 0)
+		{
+			throw std::runtime_error("Filter config needs a non-empty 'chain' list.");
+		}
+
+		FilterOptions options;
+		for (const YAML::Node &stepNode : config["chain"])
+		{
+			if (!stepNode.IsMap() || !stepNode["type"])
+			{
+				throw std::runtime_error("Each chain item needs: type");
+			}
+
+			FilterStep step;
+			step.type = parseFilterStage(stepNode["type"].as<std::string>());
+			if (stageNeedsTimeWindow(step.type))
+			{
+				if (!stepNode["time_window_us"])
+				{
+					throw std::runtime_error("Noise filter step is missing 'time_window_us'.");
+				}
+				step.noiseTimeWindow = dv::Duration(stepNode["time_window_us"].as<int64_t>());
+			}
+			options.chain.push_back(step);
+		}
+
+		if (config["hot_pixel"])
+		{
+			const YAML::Node hotPixel = config["hot_pixel"];
+			if (hotPixel["auto_detect"])
+			{
+				options.hotPixelOptions.autoDetect = hotPixel["auto_detect"].as<bool>();
+			}
+			if (hotPixel["n_std_dev"])
+			{
+				options.hotPixelOptions.nStdDev = hotPixel["n_std_dev"].as<double>();
+			}
+			if (hotPixel["n_hot_pixels"])
+			{
+				options.hotPixelOptions.nHotPixels = hotPixel["n_hot_pixels"].as<int>();
+			}
+		}
+
+		if (config["roi"])
+		{
+			const YAML::Node roi = config["roi"];
+			if (!roi.IsSequence() || roi.size() != 4)
+			{
+				throw std::runtime_error("'roi' must be [x, y, width, height].");
+			}
+			options.roi = cv::Rect(roi[0].as<int>(), roi[1].as<int>(), roi[2].as<int>(), roi[3].as<int>());
+		}
+
+		if (config["polarity"])
+		{
+			try
+			{
+				options.polarity = config["polarity"].as<bool>();
+			}
+			catch (const YAML::BadConversion &)
+			{
+				options.polarity = parsePolarity(config["polarity"].as<std::string>());
+			}
+		}
+
+		if (chainContains(options.chain, FilterStage::ROI) && !options.roi.has_value())
+		{
+			throw std::runtime_error("Chain contains roi but config has no 'roi' value.");
+		}
+
+		if (chainContains(options.chain, FilterStage::POLARITY) && !config["polarity"])
+		{
+			throw std::runtime_error("Chain contains polarity but config has no 'polarity' value.");
+		}
+
+		return options;
 	}
 
 	int filterStereoRecording(const std::filesystem::path &inputAedat4, const std::filesystem::path &outputAedat4,

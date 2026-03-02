@@ -27,6 +27,21 @@ static std::string getISOTimestamp()
 	return ss.str();
 }
 
+static void writeFileIfMissing(const std::filesystem::path &path, const std::string &content)
+{
+	if (std::filesystem::exists(path))
+	{
+		return;
+	}
+
+	std::ofstream file(path);
+	if (!file.is_open())
+	{
+		throw std::runtime_error("Could not create file: " + path.string());
+	}
+	file << content;
+}
+
 Session Session::create(const std::filesystem::path& parentPath, const std::string& name)
 {
 	Session session;
@@ -86,8 +101,35 @@ void Session::initializeDirectories()
 	std::filesystem::create_directories(rootPath_);
 	std::filesystem::create_directories(getConfigDir());
 	std::filesystem::create_directories(getTargetsDir());
+	std::filesystem::path filtersDir = getConfigDir() / "filters";
+	std::filesystem::create_directories(filtersDir);
 	std::filesystem::create_directories(getCalibrationsDir());
 	std::filesystem::create_directories(getScenesDir());
+
+	writeFileIfMissing(filtersDir / "default.yaml", R"(chain:
+  - type: background_activity
+    time_window_us: 3000
+  - type: hot_pixel
+
+hot_pixel:
+  auto_detect: true
+  n_std_dev: 4.0
+  n_hot_pixels: -1
+)");
+
+	writeFileIfMissing(filtersDir / "strong_denoise.yaml", R"(chain:
+  - type: background_activity
+    time_window_us: 5000
+  - type: hot_pixel
+  - type: fast_decay
+    time_window_us: 10000
+
+hot_pixel:
+  auto_detect: true
+  n_std_dev: 3.5
+  n_hot_pixels: -1
+)");
+
 	// logs/ created on-demand when logging is implemented
 }
 

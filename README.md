@@ -71,12 +71,16 @@ cd scripts
 
 # 4. Record a scene
 ./build/Debug/sert record lab -t scene -n outdoor
+
+# 5. Filter with explicit config path
+./build/Debug/sert filter lab/scenes/outdoor/raw/stereo_recording.aedat4 --config lab/config/filters/default.yaml
 ```
 
 **Commands:**
 ```
 record [<session>] -t calib|scene [-n <name>] [-v]
 render <capture_path>
+filter <recording.aedat4> --config <path/to/config.yaml>
 calibrate <calibration_path> [-t <target> --config <args>]
 set-calibration <calibration_path>
 ```
@@ -86,6 +90,29 @@ set-calibration <calibration_path>
 - If session not specified, `record` uses current directory
 - Tool auto-detects session root by finding `session.yaml`
 - Run `./build/Debug/sert` without arguments to see full help
+
+## Filter chains (YAML)
+
+- New sessions auto-create filter presets in `<session>/config/filters/`:
+  - `default.yaml` (matches current default behavior)
+  - `strong_denoise.yaml` (stronger denoising)
+- Use an explicit config path:
+
+```bash
+./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config <session>/config/filters/strong_denoise.yaml
+```
+
+- Or pass any custom yaml path:
+
+```bash
+./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config /tmp/custom_chain.yaml
+```
+
+- Filtered output goes to `<capture>/raw/filtered/` and is named:
+  - `<recording_stem>__<config_stem>.aedat4`
+- Chain order in YAML is the order applied at runtime.
+- Full filter reference (all types + options): `docs/filter_chains.md`
+
 
 For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wiki/calibration-targets
 
@@ -97,6 +124,9 @@ For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wi
 ├── config/
 │   ├── targets/                            # Calibration target definitions
 │   │   └── checkerboard.yaml
+│   ├── filters/                            # Event filter chains
+│   │   ├── default.yaml
+│   │   └── strong_denoise.yaml
 │   └── esvo/                               # ESVO configuration
 │       ├── left.yaml                       # Left camera calibration (from camchain)
 │       ├── right.yaml                      # Right camera calibration (from camchain)
@@ -138,6 +168,7 @@ This project integrates the following third-party tools:
 - **Kalibr**: Camera calibration toolbox - https://github.com/ethz-asl/kalibr
 - **ESVO**: Event-based Stereo Visual Odometry - https://github.com/HKUST-Aerial-Robotics/ESVO
 - **ESVO2**: Direct Visual-Intertial Odometry with Stereo Event Cameras: https://github.com/NAIL-HNU/ESVO2
+
 All components are automatically set up by the installation scripts. Original licenses and attributions are preserved.
 
 # ESVO Compatibility Note

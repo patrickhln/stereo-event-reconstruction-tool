@@ -45,6 +45,8 @@ namespace Aedat4Filter
 
 	StereoCameraNames readStereoCameraNames(const std::filesystem::path &metadataDirectory);
 
+	FilterOptions loadFilterOptionsFromYaml(const std::filesystem::path &yamlPath);
+
 	int filterStereoRecording(const std::filesystem::path &inputAedat4, const std::filesystem::path &outputAedat4,
 		const StereoCameraNames &cameraNames, const FilterOptions &options = {});
 }

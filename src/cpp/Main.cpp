@@ -112,6 +112,32 @@ int main (int argc, char *argv[])
 
 		try
 		{
+			std::string configArg;
+			for (int i = 3; i < argc; ++i)
+			{
+				std::string arg = argv[i];
+				if (arg == "--config")
+				{
+					if (i + 1 >= argc)
+					{
+						Log::error("Error: --config requires a value");
+						return EXIT_FAILURE;
+					}
+					configArg = argv[++i];
+				}
+				else
+				{
+					Log::error("Unknown filter option: ", arg);
+					return EXIT_FAILURE;
+				}
+			}
+
+			if (configArg.empty())
+			{
+				Log::error("Error: filter requires --config <path/to/config.yaml>");
+				return EXIT_FAILURE;
+			}
+
 			std::filesystem::path inputAedat4 = argv[2];
 			if (!inputAedat4.is_absolute())
 			{
@@ -127,16 +153,29 @@ int main (int argc, char *argv[])
 			}
 
 			const std::filesystem::path rawDir = inputAedat4.parent_path();
-			const std::filesystem::path outputAedat4 = rawDir / (inputAedat4.stem().string() + "_filtered.aedat4");
+			std::filesystem::path configPath = std::filesystem::path(configArg);
+			if (!configPath.is_absolute())
+			{
+				configPath = std::filesystem::absolute(configPath);
+			}
+			configPath = configPath.lexically_normal();
+			if (configPath.extension() != ".yaml")
+			{
+				Log::error("Error: --config must point to a .yaml file: ", configPath.string());
+				return EXIT_FAILURE;
+			}
+			if (!std::filesystem::is_regular_file(configPath))
+			{
+				Log::error("Error: Filter config not found: ", configPath.string());
+				return EXIT_FAILURE;
+			}
 
-			Aedat4Filter::FilterOptions options;
-			options.chain = {
-				{Aedat4Filter::FilterStage::BACKGROUND_ACTIVITY, dv::Duration(3000)},
-				{Aedat4Filter::FilterStage::HOT_PIXEL},
-				//{Aedat4Filter::FilterStage::FAST_DECAY, dv::Duration(10000)}
-			};
-			options.hotPixelOptions.autoDetect = true;
-			options.hotPixelOptions.nStdDev = 4.0;
+			const std::filesystem::path filteredDir = rawDir / "filtered";
+			std::filesystem::create_directories(filteredDir);
+			const std::filesystem::path outputAedat4 = filteredDir /
+				(inputAedat4.stem().string() + "__" + configPath.stem().string() + ".aedat4");
+
+			const Aedat4Filter::FilterOptions options = Aedat4Filter::loadFilterOptionsFromYaml(configPath);
 
 			const Aedat4Filter::StereoCameraNames cameraNames = Aedat4Filter::readStereoCameraNames(rawDir);
 			return Aedat4Filter::filterStereoRecording(inputAedat4, outputAedat4, cameraNames, options);
@@ -396,9 +435,9 @@ void logUsage(char* argv[])
 		"      --         Pass remaining args directly to rpg_e2vid/run_reconstruction.py\n",
 		"      		      -> E2VID args can be found at https://github.com/uzh-rpg/rpg_e2vid\n\n"
 
-		"  filter <recording.aedat4>\n",
-		"      apply (hardcoded for now) event filter chain\n",
-		"      Writes *_filtered.aedat4 next to input file\n\n",
+		"  filter <recording.aedat4> --config <path/to/config.yaml>\n",
+		"      Apply event filter chain from explicit YAML config path\n",
+		"      Writes output to raw/filtered/<recording>__<config>.aedat4\n\n",
 
 		"  calibrate <capture> [-t <target> --config <args>]\n",
 		"      Run Kalibr calibration on capture\n",
@@ -418,7 +457,8 @@ void logUsage(char* argv[])
 		"  ", cmd, " record lab -t scene -n outdoor     # Create 'lab/' and record scene\n",
 		"  ", cmd, " render lab/calibrations/calib_01   # Generate frames (default settings)\n",
 		"  ", cmd, " render lab/calibrations/calib_01 -- --window_duration 20 --auto_hdr\n",
-		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4\n",
+		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4 --config lab/config/filters/default.yaml\n",
+		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4 --config ./custom_filters/my_chain.yaml\n",
 		"  ", cmd, " calibrate lab/calibrations/calib_01 -t checkerboard --config 8 6 0.068 0.068\n",
 		"  ", cmd, " set-calibration lab/calibrations/calib_01\n"
 	);
