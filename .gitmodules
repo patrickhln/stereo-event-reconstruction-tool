@@ -1,4 +1,8 @@
 [submodule "rpg_e2vid"]
 	path = rpg_e2vid
 	url = git@github.com:patrickhln/rpg_e2vid.git
-	branch = xpu-support
+	branch = master
+[submodule "event_cnn_minimal"]
+	path = event_cnn_minimal
+	url = git@github.com:patrickhln/event_cnn_minimal.git
+	branch = feature/xpu-inference

@@ -147,10 +147,24 @@ namespace FrameGen
 	}
 
 
-	int runE2VID(const std::filesystem::path& eventFile, const std::filesystem::path& outputDir, const std::string& datasetName, const std::vector<std::string>& extraArgs)
+	int runE2VID(const std::filesystem::path& eventFile, const std::filesystem::path& outputDir, const std::string& datasetName, const RenderOptions& options)
 	{
 		std::filesystem::path e2vidPath = std::filesystem::path(PROJECT_ROOT_DIR) / "rpg_e2vid" / "run_reconstruction.py";
-		std::filesystem::path modelPath = std::filesystem::path(PROJECT_ROOT_DIR) / "rpg_e2vid" / "pretrained" / "E2VID_lightweight.pth.tar";
+		std::filesystem::path modelPath = std::filesystem::path(PROJECT_ROOT_DIR) / "data" / "models" / "e2vid" / "E2VID_lightweight.pth.tar";
+		
+		std::vector<std::string> filteredArgs;
+		for (size_t i = 0; i < options.extraArgs.size(); ++i)
+		{
+			if (options.extraArgs[i] == "--path_to_model" && i + 1 < options.extraArgs.size())
+			{
+				modelPath = options.extraArgs[i + 1];
+				++i;
+			}
+			else
+			{
+				filteredArgs.push_back(options.extraArgs[i]);
+			}
+		}
 		
 		if (!std::filesystem::exists(e2vidPath))
 		{
@@ -180,33 +194,138 @@ namespace FrameGen
 							+ "--window_duration 33.33 "; // 33.33ms
 							// + "--display ";
 
-		for (const auto &arg : extraArgs)
+		for (const auto &arg : filteredArgs)
 		{
 			command += shellQuote(arg) + " ";
 		}
 
-		Log::info("Executing: ", command);
+		Log::info("Executing E2VID: ", command);
+
+		int result = std::system(command.c_str());
+		return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+	}
+
+	int runECNN(const std::filesystem::path& txtFile, const std::filesystem::path& outputDir, const std::string& datasetName, const RenderOptions& options)
+	{
+		std::filesystem::path h5File = txtFile;
+		h5File.replace_extension(".h5");
+
+		std::filesystem::path txtToH5Path = std::filesystem::path(PROJECT_ROOT_DIR) / "src" / "python" / "txt_to_h5.py";
+		std::filesystem::path inferencePath = std::filesystem::path(PROJECT_ROOT_DIR) / "event_cnn_minimal" / "inference.py";
+
+		std::filesystem::path modelDir = std::filesystem::path(PROJECT_ROOT_DIR) / "data" / "models" / "event_cnn_minimal";
+		std::filesystem::path modelPath;
+		bool useUpdate = (options.model == "e2vidplusupdate");
+
+		if (options.model == "e2vidplus")
+		{
+			modelPath = modelDir / "reconstruction" / "reconstruction_model.pth";
+		}
+		else if (options.model == "e2vidplusupdate")
+		{
+			modelPath = modelDir / "reconstruction" / "update_reconstruction_model.pth";
+		}
+		else if (options.model == "firenet")
+		{
+			modelPath = modelDir / "firenet" / "firenet_all_cts.pth";
+		}
+
+		std::vector<std::string> filteredArgs;
+		for (size_t i = 0; i < options.extraArgs.size(); ++i)
+		{
+			if (options.extraArgs[i] == "--checkpoint_path" && i + 1 < options.extraArgs.size())
+			{
+				modelPath = options.extraArgs[i + 1];
+				++i;
+			}
+			else if (options.extraArgs[i] == "--update")
+			{
+				useUpdate = true;
+			}
+			else
+			{
+				filteredArgs.push_back(options.extraArgs[i]);
+			}
+		}
+
+		if (!std::filesystem::exists(modelPath))
+		{
+			Log::error("Could not find event_cnn_minimal model at: ", modelPath.string());
+			Log::error("Run scripts/install_python_env.sh to download the models.");
+			return EXIT_FAILURE;
+		}
+
+		if (environment_installed() != EXIT_SUCCESS)
+		{
+			Log::error("Conda environment could not be found! Aborting...");
+			return EXIT_FAILURE;
+		}
+
+		if (!std::filesystem::exists(h5File))
+		{
+			std::string h5Cmd = "conda run --no-capture-output -n sert-python python3 -u "
+								+ shellQuote(txtToH5Path.string()) + " "
+								+ shellQuote(txtFile.string()) + " "
+								+ shellQuote(h5File.string());
+			Log::info("Converting txt to h5: ", h5Cmd);
+			if (std::system(h5Cmd.c_str()) != 0)
+			{
+				return EXIT_FAILURE;
+			}
+		}
+
+		std::string command = "conda run --no-capture-output -n sert-python python3 -u " + shellQuote(inferencePath.string()) + " "
+							+ "--checkpoint_path " + shellQuote(modelPath.string()) + " "
+							+ "--events_file_path " + shellQuote(h5File.string()) + " "
+							+ "--output_folder " + shellQuote((outputDir / datasetName).string()) + " "
+							+ "--voxel_method t_seconds "
+							+ "--t 0.03333 "
+							+ "--sliding_window_t 0 ";
+
+		if (useUpdate)
+		{
+			command += "--update ";
+		}
+
+		if (options.device != "auto")
+		{
+			command += "--device " + options.device + " ";
+		}
+
+		for (const auto &arg : filteredArgs)
+		{
+			command += shellQuote(arg) + " ";
+		}
+
+		Log::info("Executing ECNN: ", command);
 
 		int result = std::system(command.c_str());
 		return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 	
-	int recordingToVideo(const std::filesystem::path &intermediateDir, const std::filesystem::path &reconstructionDir, const std::vector<std::string>& extraArgs)
+	int recordingToVideo(const std::filesystem::path &intermediateDir, const std::filesystem::path &reconstructionDir, const RenderOptions& options)
 	{
-		
 		std::filesystem::path leftTxt = intermediateDir / "leftEvents.txt";	
 		std::filesystem::path rightTxt = intermediateDir / "rightEvents.txt";	
 		
-		Log::info("Starting E2VID Reconstruction...");
+		std::string backendStr = options.model == "e2vid" ? "rpg_e2vid" : "event_cnn_minimal";
+		Log::info("Starting Reconstruction with backend: ", backendStr, " [Model: ", options.model, "]");
 
-		if (runE2VID(leftTxt, reconstructionDir, "left", extraArgs) != EXIT_SUCCESS)
+		if (options.model == "e2vid" && options.device != "auto")
 		{
-			Log::error("E2VID failed for left camera");
+			Log::warn("Device override is not supported by rpg_e2vid backend yet. Using backend auto selection.");
+		}
+
+		auto runner = options.model == "e2vid" ? runE2VID : runECNN;
+
+		if (runner(leftTxt, reconstructionDir, "left", options) != EXIT_SUCCESS)
+		{
+			Log::error(backendStr, " failed for left camera");
 			return EXIT_FAILURE;
 		}
-		if (runE2VID(rightTxt, reconstructionDir, "right", extraArgs) != EXIT_SUCCESS)
+		if (runner(rightTxt, reconstructionDir, "right", options) != EXIT_SUCCESS)
 		{
-			Log::error("E2VID failed for right camera");
+			Log::error(backendStr, " failed for right camera");
 			return EXIT_FAILURE;
 		}
 

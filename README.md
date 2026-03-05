@@ -46,7 +46,7 @@ cd scripts
 sudo apt install -y docker.io
 sudo usermod -aG docker $USER  # Log out and back in after this
 sudo usermod -aG video,render $USER  # Needed for GPU OpenGL in Docker
-# For NVIDIA GPUs: install nvidia-container-toolkit on the host, then, for the run_esvo.sh use: --gpu nvidia
+# For NVIDIA GPUs: install nvidia-container-toolkit on the host, then, for the run_esvo(2).sh use: --gpu nvidia
 # To be integrated into cli
 cd scripts
 ./docker_build_esvo_kalibr.sh  
@@ -73,8 +73,10 @@ cd scripts
 ./build/Debug/sert record lab -t scene -n outdoor
 
 # 5. Filter with explicit config path
-./build/Debug/sert filter lab/scenes/outdoor/raw/stereo_recording.aedat4 --config lab/config/filters/default.yaml
+./build/Debug/sert filter lab/scenes/outdoor/raw/stereo_recording.aedat4 --config lab/config/filters/hot_then_ba.yaml
 ```
+
+For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wiki/calibration-targets
 
 **Commands:**
 ```
@@ -94,12 +96,15 @@ set-calibration <calibration_path>
 ## Filter chains (YAML)
 
 - New sessions auto-create filter presets in `<session>/config/filters/`:
-  - `default.yaml` (matches current default behavior)
-  - `strong_denoise.yaml` (stronger denoising)
+  - `hot_only.yaml`
+  - `ba_only.yaml`
+  - `hot_then_ba.yaml`
+  - `ba_then_hot.yaml`
+- `raw` is the no-filter baseline condition used in ablation studies (no YAML required).
 - Use an explicit config path:
 
 ```bash
-./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config <session>/config/filters/strong_denoise.yaml
+./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config <session>/config/filters/hot_then_ba.yaml
 ```
 
 - Or pass any custom yaml path:
@@ -113,8 +118,22 @@ set-calibration <calibration_path>
 - Chain order in YAML is the order applied at runtime.
 - Full filter reference (all types + options): `docs/filter_chains.md`
 
+## Convert txt events to h5 (event_cnn_minimal)
 
-For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wiki/calibration-targets
+Point the converter at a scene/calibration folder (or `intermediate/`) and it creates
+`leftEvents.h5` and `rightEvents.h5` next to the `.txt` files in `intermediate/`.
+
+```bash
+python3 src/python/txt_to_h5.py <session>/scenes/<scene_name>
+python3 src/python/txt_to_h5.py <session>/calibrations/<calib_name>
+```
+
+You can also convert a single file explicitly:
+
+```bash
+python3 src/python/txt_to_h5.py <capture>/intermediate/leftEvents.txt
+python3 src/python/txt_to_h5.py <capture>/intermediate/leftEvents.txt <capture>/intermediate/leftEvents.h5 --overwrite
+```
 
 ## Session Structure
 
@@ -125,8 +144,10 @@ For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wi
 │   ├── targets/                            # Calibration target definitions
 │   │   └── checkerboard.yaml
 │   ├── filters/                            # Event filter chains
-│   │   ├── default.yaml
-│   │   └── strong_denoise.yaml
+│   │   ├── hot_only.yaml
+│   │   ├── ba_only.yaml
+│   │   ├── hot_then_ba.yaml
+│   │   └── ba_then_hot.yaml
 │   └── esvo/                               # ESVO configuration
 │       ├── left.yaml                       # Left camera calibration (from camchain)
 │       ├── right.yaml                      # Right camera calibration (from camchain)
@@ -164,6 +185,9 @@ This project integrates the following third-party tools:
 
 - **E2VID**: Event-to-video reconstruction - https://github.com/uzh-rpg/rpg_e2vid
   - Included as git submodule using a [fork](https://github.com/patrickhln/rpg_e2vid)
+  - Requires `git clone --recursive` to initialize
+- **event_cnn_minimal**: Minimal code for loading models trained for ECCV'20 
+  - Included as git submodule using a [fork](https://github.com/patrickhln/event_cnn_minimal)
   - Requires `git clone --recursive` to initialize
 - **Kalibr**: Camera calibration toolbox - https://github.com/ethz-asl/kalibr
 - **ESVO**: Event-based Stereo Visual Odometry - https://github.com/HKUST-Aerial-Robotics/ESVO

@@ -15,7 +15,12 @@ def load_frames_and_timestamps(frames_path):
         ])
         timestamps_file_path = os.path.join(frames_path, "timestamps.txt") 
         if os.path.exists(timestamps_file_path):
-            timestamps = np.loadtxt(timestamps_file_path)
+            try:
+                # rpg_e2vid format: one float timestamp per line
+                timestamps = np.loadtxt(timestamps_file_path, ndmin=1)
+            except ValueError:
+                # event_cnn_minimal format: "frame_xxx.png <timestamp>"
+                timestamps = np.loadtxt(timestamps_file_path, usecols=1, ndmin=1)
             assert len(frames_path_list) == len(timestamps), "Frame/timestamp count mismatch!"
             return frames_path_list, timestamps
         else:
@@ -243,7 +248,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert stereo frames to ROS bag")
     parser.add_argument("--path", required=True, help="Path to capture directory (should contain frames/left and frames/right)")
     parser.add_argument("--max_diff_ms", type=float, default=10.0, help="Max timestamp diff for matching timestamps of frames")
-    parser.add_argument("--camchain", default=None, help="Kalibr camchain yaml (required for camera_info)")
+    parser.add_argument("--camchain", required=False, default=None, help="Kalibr camchain yaml (optional, adds camera_info)")
 
     args = parser.parse_args()
     
@@ -258,6 +263,8 @@ def main():
             raise FileNotFoundError(f"Camchain file not found: {args.camchain}")
         camera_calib = load_camchain_for_camera_info(args.camchain)
         print(f"Loaded camera calibration from: {args.camchain}")
+    else:
+        print("No --camchain provided. Writing image topics only (no camera_info).")
 
     write_rosbag(
         os.path.join(args.path, "intermediate", "stereo_frames.bag"),

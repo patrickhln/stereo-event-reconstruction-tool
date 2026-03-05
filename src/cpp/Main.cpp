@@ -45,19 +45,42 @@ int main (int argc, char *argv[])
 		try
 		{
 			std::filesystem::path capturePath = std::filesystem::absolute(argv[2]);
-			std::vector<std::string> e2vidArgs;
+			FrameGen::RenderOptions renderOpts;
 			for (int i = 3; i < argc; ++i)
 			{
 				std::string arg = argv[i];
-				if (arg == "--")
+				if (arg == "--model" && i + 1 < argc)
+				{
+					renderOpts.model = argv[++i];
+				}
+				else if (arg == "--device" && i + 1 < argc)
+				{
+					renderOpts.device = argv[++i];
+				}
+				else if (arg == "--")
 				{
 					for (++i; i < argc; ++i)
 					{
-						e2vidArgs.emplace_back(argv[i]);
+						renderOpts.extraArgs.emplace_back(argv[i]);
 					}
 					break;
 				}
-				Log::error("Unknown render option: ", arg, ". Use '--' before E2VID args.");
+				else
+				{
+					Log::error("Unknown render option: ", arg, ". Use '--' before extra backend args.");
+					return EXIT_FAILURE;
+				}
+			}
+
+			if (renderOpts.model != "e2vid" && renderOpts.model != "e2vidplus" && renderOpts.model != "e2vidplusupdate" && renderOpts.model != "firenet")
+			{
+				Log::error("Unknown model: ", renderOpts.model, ". Supported models: e2vid, e2vidplus, e2vidplusupdate, firenet.");
+				return EXIT_FAILURE;
+			}
+
+			if (renderOpts.device != "auto" && renderOpts.device != "cpu" && renderOpts.device != "xpu" && renderOpts.device != "cuda")
+			{
+				Log::error("Unknown device: ", renderOpts.device, ". Supported devices: auto, cpu, xpu, cuda.");
 				return EXIT_FAILURE;
 			}
 			if (!std::filesystem::exists(capturePath))
@@ -86,12 +109,12 @@ int main (int argc, char *argv[])
 			std::filesystem::path recordingFile = rawDir / "stereo_recording.aedat4";
 			if (FrameGen::convertAedat4ToTxt(recordingFile, intermediateDir, meta.leftCamName, meta.rightCamName) != EXIT_SUCCESS)
 			{
-				Log::error("Could not convert .aedat4 to .txt for further E2VID reconstruction. Aborting...");	
+				Log::error("Could not convert .aedat4 to .txt for reconstruction. Aborting...");	
 				return EXIT_FAILURE;
 			}
-			if (FrameGen::recordingToVideo(intermediateDir, framesDir, e2vidArgs) != EXIT_SUCCESS)
+			if (FrameGen::recordingToVideo(intermediateDir, framesDir, renderOpts) != EXIT_SUCCESS)
 			{
-				Log::error("E2VID reconstruction failed. Aborting...");
+				Log::error("Reconstruction failed. Aborting...");
 				return EXIT_FAILURE;
 			}
 		}
@@ -429,11 +452,12 @@ void logUsage(char* argv[])
 		"      -n         Custom capture name (optional)\n",
 		"      -v         Enable live preview (optional)\n\n",
 
-		"  render <capture> [-- <e2vid_args...>]\n",
-		"      Generate frames from events using E2VID\n",
+		"  render <capture> [--model <model>] [--device <device>] [-- <e2vid_args...>]\n",
+		"      Generate frames from events.\n",
 		"      <capture>  Path to capture directory\n",
-		"      --         Pass remaining args directly to rpg_e2vid/run_reconstruction.py\n",
-		"      		      -> E2VID args can be found at https://github.com/uzh-rpg/rpg_e2vid\n\n"
+		"      --model    Reconstruction model: e2vid (default), e2vidplus, e2vidplusupdate, firenet\n",
+		"      --device   Device to use: auto (default), cpu, xpu, cuda\n",
+		"      --         Pass remaining args directly to backend scripts\n\n"
 
 		"  filter <recording.aedat4> --config <path/to/config.yaml>\n",
 		"      Apply event filter chain from explicit YAML config path\n",
@@ -457,7 +481,7 @@ void logUsage(char* argv[])
 		"  ", cmd, " record lab -t scene -n outdoor     # Create 'lab/' and record scene\n",
 		"  ", cmd, " render lab/calibrations/calib_01   # Generate frames (default settings)\n",
 		"  ", cmd, " render lab/calibrations/calib_01 -- --window_duration 20 --auto_hdr\n",
-		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4 --config lab/config/filters/default.yaml\n",
+		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4 --config lab/config/filters/medium.yaml\n",
 		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4 --config ./custom_filters/my_chain.yaml\n",
 		"  ", cmd, " calibrate lab/calibrations/calib_01 -t checkerboard --config 8 6 0.068 0.068\n",
 		"  ", cmd, " set-calibration lab/calibrations/calib_01\n"
