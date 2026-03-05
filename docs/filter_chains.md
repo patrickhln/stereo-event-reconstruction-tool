@@ -2,20 +2,25 @@
 
 This tool loads filter chains from a YAML file passed via `--config`.
 
-- `--config` must point to an existing `.yaml` file 
-- New sessions create two preset configs in `<session>/config/filters/`:
-  - `default.yaml`
-  - `strong_denoise.yaml`
+- `--config` must point to an existing `.yaml` file.
+- New sessions auto-create four ablation presets in `<session>/config/filters/`:
+  - `hot_only.yaml`
+  - `ba_only.yaml`
+  - `hot_then_ba.yaml`
+  - `ba_then_hot.yaml`
+- `raw` is the no-filter baseline condition used in ablation studies and does not require a YAML file.
 
 Example:
 
 ```bash
-./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config <session>/config/filters/default.yaml
+./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config <session>/config/filters/hot_then_ba.yaml
 ```
 
 ## YAML shape
 
 `chain` is required and order is applied as written.
+
+For the `background_activity` filter, a larger `time_window_us` is more permissive (keeps more events).
 
 Settings:
 - `chain`: only the ordered filter steps
@@ -23,9 +28,9 @@ Settings:
 
 ```yaml
 chain:
+  - type: hot_pixel
   - type: background_activity
     time_window_us: 3000
-  - type: hot_pixel
 
 hot_pixel:
   auto_detect: true

@@ -106,9 +106,7 @@ void Session::initializeDirectories()
 	std::filesystem::create_directories(getCalibrationsDir());
 	std::filesystem::create_directories(getScenesDir());
 
-	writeFileIfMissing(filtersDir / "default.yaml", R"(chain:
-  - type: background_activity
-    time_window_us: 3000
+	writeFileIfMissing(filtersDir / "hot_only.yaml", R"(chain:
   - type: hot_pixel
 
 hot_pixel:
@@ -117,16 +115,30 @@ hot_pixel:
   n_hot_pixels: -1
 )");
 
-	writeFileIfMissing(filtersDir / "strong_denoise.yaml", R"(chain:
+	writeFileIfMissing(filtersDir / "ba_only.yaml", R"(chain:
   - type: background_activity
-    time_window_us: 5000
+    time_window_us: 3000
+)");
+
+	writeFileIfMissing(filtersDir / "hot_then_ba.yaml", R"(chain:
   - type: hot_pixel
-  - type: fast_decay
-    time_window_us: 10000
+  - type: background_activity
+    time_window_us: 3000
 
 hot_pixel:
   auto_detect: true
-  n_std_dev: 3.5
+  n_std_dev: 4.0
+  n_hot_pixels: -1
+)");
+
+	writeFileIfMissing(filtersDir / "ba_then_hot.yaml", R"(chain:
+  - type: background_activity
+    time_window_us: 3000
+  - type: hot_pixel
+
+hot_pixel:
+  auto_detect: true
+  n_std_dev: 4.0
   n_hot_pixels: -1
 )");
 
