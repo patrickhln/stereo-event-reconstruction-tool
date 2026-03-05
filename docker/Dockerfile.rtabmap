@@ -1,0 +1,22 @@
+FROM introlab3it/rtabmap:focal
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Thin wrapper around official RTAB-Map Docker for SERT offline stereo bags
+#
+# GPU/GUI passthrough depends on host setup (NVIDIA vs Intel/AMD), see:
+# https://wiki.ros.org/docker/Tutorials/Hardware%20Acceleration
+# For batch/offline recon runs, CPU-only headless mode also works fine.
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:kisak/turtle \
+    && apt-get update && apt-get install -y \
+    ros-noetic-rtabmap-ros \
+    ros-noetic-stereo-image-proc \
+    ros-noetic-pcl-ros \
+    libgl1-mesa-dri \
+    libglx-mesa0 \
+    libegl1-mesa \
+    && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

@@ -192,7 +192,7 @@ This project integrates the following third-party tools:
 - **Kalibr**: Camera calibration toolbox - https://github.com/ethz-asl/kalibr
 - **ESVO**: Event-based Stereo Visual Odometry - https://github.com/HKUST-Aerial-Robotics/ESVO
 - **ESVO2**: Direct Visual-Intertial Odometry with Stereo Event Cameras: https://github.com/NAIL-HNU/ESVO2
-
+- **RTAB-Map**: Real-Time Appearance-Based Mapping - https://github.com/introlab/rtabmap
 All components are automatically set up by the installation scripts. Original licenses and attributions are preserved.
 
 # ESVO Compatibility Note

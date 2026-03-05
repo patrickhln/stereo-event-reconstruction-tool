@@ -1,0 +1,51 @@
+<launch>
+    <arg name="enable_viz" default="true" />
+
+    <rosparam param="/use_sim_time">true</rosparam>
+
+    <node pkg="stereo_image_proc" type="stereo_image_proc" name="stereo_image_proc" ns="stereo" output="screen">
+        <remap from="left/image_raw" to="/cam0/image_raw" />
+        <remap from="right/image_raw" to="/cam1/image_raw" />
+        <remap from="left/camera_info" to="/cam0/camera_info" />
+        <remap from="right/camera_info" to="/cam1/camera_info" />
+        <param name="approximate_sync" value="true" />
+        <param name="queue_size" value="100" />
+    </node>
+
+	<node pkg="rtabmap_odom" type="stereo_odometry" name="stereo_odometry" output="screen">
+        <param name="frame_id" value="cam0" />
+        <param name="approx_sync" value="true" />
+        <param name="sync_queue_size" value="100" />
+
+        <!-- Small tune for bad quality frames: lets it lock easier + keep motion smoother -->
+        <!-- Param list ref: https://docs.ros.org/en/noetic/api/rtabmap/html/classrtabmap_1_1Parameters.html -->
+        <param name="Vis/MinInliers" value="10" />
+        <param name="Vis/CorType" value="1" />
+        <param name="Odom/GuessMotion" value="true" />
+        <param name="Odom/Strategy" value="1" />
+
+        <remap from="left/image_rect" to="/stereo/left/image_rect" />
+        <remap from="right/image_rect" to="/stereo/right/image_rect" />
+        <remap from="left/camera_info" to="/cam0/camera_info" />
+        <remap from="right/camera_info" to="/cam1/camera_info" />
+    </node>
+
+    <node pkg="rtabmap_slam" type="rtabmap" name="rtabmap" output="screen" args="--delete_db_on_start">
+        <param name="frame_id" value="cam0" />
+        <param name="odom_frame_id" value="odom" />
+        <param name="subscribe_depth" value="false" />
+        <param name="subscribe_stereo" value="true" />
+        <param name="approx_sync" value="true" />
+        <param name="sync_queue_size" value="100" />
+        <param name="database_path" value="/output/rtabmap.db" />
+
+        <param name="Vis/MinInliers" value="10" />
+
+        <remap from="left/image_rect" to="/stereo/left/image_rect" />
+        <remap from="right/image_rect" to="/stereo/right/image_rect" />
+        <remap from="left/camera_info" to="/cam0/camera_info" />
+        <remap from="right/camera_info" to="/cam1/camera_info" />
+    </node>
+
+    <node if="$(arg enable_viz)" pkg="rtabmap_viz" type="rtabmap_viz" name="rtabmapviz" output="screen" />
+</launch>

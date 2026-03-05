@@ -295,11 +295,11 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
                 imu_yaml_content = """
                 #Accelerometers
                 accelerometer_noise_density: 0.00177   #Noise density (continuous-time) (180 µg/√Hz * 10^-6 * 9.81) (m/s^2/√Hz)
-                accelerometer_random_walk:   0.0008    #Bias random walk (m/s^2) - static arbitrary value for now (need to calibrate using kalibr_allan)
+                accelerometer_random_walk:   4.33e-04  #Bias random walk (m/s^2) - static arbitrary value for now (need to calibrate using kalibr_allan)
 
                 #Gyroscopes
                 gyroscope_noise_density:     0.000122  #Noise density (continuous-time) (0.007 °/s/√Hz * (π / 180)) (rad/s/√Hz)
-                gyroscope_random_walk:       0.00003   #Bias random walk (rad/s) - static arbitrary value for now (need to calibrate using kalibr_allan)
+                gyroscope_random_walk:       2.66e-05  #Bias random walk (rad/s) - static arbitrary value for now (need to calibrate using kalibr_allan)
 
                 rostopic:                    /davis/left/imu      #the IMU ROS topic
                 update_rate:                 800.0                #Hz (for discretization of the values above)
