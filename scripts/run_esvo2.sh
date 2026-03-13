@@ -7,6 +7,8 @@ set -e
 # Options:
 #   --no-viz        Run without visualization (headless)
 #   --rate <r>      Bag playback rate (default: 0.2)
+#   --min-depth <m> Minimum expected scene depth in meters (default: 0.5)
+#   --max-depth <m> Maximum expected scene depth in meters (default: 10.0)
 #   --save-pc       Save final pointcloud to file
 #   --gpu <mode>    GPU mode: auto|intel|amd|nvidia|cpu (default: auto)
 #   --use-imu       Enable IMU integration (requires bag with /davis/left/imu)
@@ -18,6 +20,8 @@ if [[ $# -lt 2 ]]; then
     echo "Options:"
     echo "  --no-viz      Run without visualization"
     echo "  --rate <r>    Bag playback rate (default: 0.2)"
+    echo "  --min-depth   Minimum expected scene depth in meters (default: 0.5)"
+    echo "  --max-depth   Maximum expected scene depth in meters (default: 10.0)"
     echo "  --save-pc     Save final pointcloud"
     echo "  --use-imu     Enable IMU integration"
     echo "  --gpu <mode>  GPU mode: auto|intel|amd|nvidia|cpu"
@@ -47,6 +51,8 @@ ESVO2_LAUNCH_FILE="$SCRIPT_DIR/launch/esvo2/offline_system.launch"
 # Defaults
 VISUALIZE=true
 PLAYBACK_RATE=0.2
+MIN_DEPTH=0.5
+MAX_DEPTH=10.0
 SAVE_PC=false
 GPU_MODE=auto
 USE_IMU=false
@@ -55,6 +61,8 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --no-viz) VISUALIZE=false; shift ;;
         --rate) PLAYBACK_RATE="$2"; shift 2 ;;
+        --min-depth) MIN_DEPTH="$2"; shift 2 ;;
+        --max-depth) MAX_DEPTH="$2"; shift 2 ;;
         --save-pc) SAVE_PC=true; shift ;;
         --gpu) GPU_MODE="$2"; shift 2 ;;
         --use-imu) USE_IMU=true; shift ;;
@@ -65,6 +73,7 @@ done
 echo "=== ESVO2 Runner ==="
 echo "Session: $SESSION_PATH"
 echo "Scene:   $SCENE_DIR"
+echo "Depth:   ${MIN_DEPTH}m - ${MAX_DEPTH}m"
 echo "IMU:     $USE_IMU"
 
 # Docker sanity checks
@@ -107,6 +116,18 @@ if [[ ! -f "$BAG_FILE" ]]; then
     exit 1
 fi
 
+echo "Checking bag for camera_info topics /davis/left/camera_info and /davis/right/camera_info ..."
+if ! docker run --rm \
+    -v "$BAG_FILE:/data/input.bag:ro" \
+    "$ESVO2_IMAGE" \
+    /bin/bash -lc "rosbag info /data/input.bag | grep -q '/davis/left/camera_info' && rosbag info /data/input.bag | grep -q '/davis/right/camera_info'"; then
+    echo "Error: ESVO2 requires /davis/left/camera_info and /davis/right/camera_info in:"
+    echo "  $BAG_FILE"
+    echo "Regenerate the bag with calibration embedded, for example:"
+    echo "  python3 src/python/aedat4_to_bag.py --path <scene> --calibration <session>/config/esvo2"
+    exit 1
+fi
+
 # IMU topic validation (fast fail before launch)
 if [[ "$USE_IMU" == "true" ]]; then
     echo "Checking bag for IMU topic /davis/left/imu ..."
@@ -121,7 +142,7 @@ if [[ "$USE_IMU" == "true" ]]; then
         exit 1
     fi
 
-    echo "Warning: IMU calibration is still pending (see notes/imu_calibration.md)."
+    echo "Warning: IMU calibration is still pending (TODO: use ./run_kalibr_imucam.sh)."
     echo "         Visual-inertial accuracy may be limited for now."
 fi
 
@@ -150,13 +171,29 @@ fi
 echo "Generating ESVO2 runtime configs (mapping/tracking/image_representation)..."
 RUNTIME_ARGS=(
     --session "$SESSION_PATH"
-    --min-depth 0.5
-    --max-depth 10.0
+    --min-depth "$MIN_DEPTH"
+    --max-depth "$MAX_DEPTH"
 )
 if [[ "$USE_IMU" == "true" ]]; then
     RUNTIME_ARGS+=(--use-imu)
 fi
 python3 "$SRC_PYTHON/generate_esvo2_config.py" "${RUNTIME_ARGS[@]}"
+
+GENERATION_RATE_HZ=$(python3 - <<PY
+import yaml
+with open("$ESVO2_CONFIG_DIR/image_representation.yaml", "r", encoding="utf-8") as f:
+    cfg = yaml.safe_load(f) or {}
+rate = cfg.get("generation_rate_hz", 100)
+try:
+    rate = int(rate)
+except Exception:
+    rate = 100
+print(max(rate, 1))
+PY
+)
+
+echo "Playback rate: $PLAYBACK_RATE"
+echo "Image representation rate (sim time): $GENERATION_RATE_HZ"
 
 OUTPUT_DIR="$SCENE_DIR/reconstruction/esvo2"
 LOGS_DIR="$OUTPUT_DIR/ros_logs"
@@ -203,11 +240,6 @@ roscore &
 PID_CORE=\$!
 sleep 2
 
-echo "Publishing Camera Info..."
-python3 /scripts/publish_camera_info.py /esvo2_config/left.yaml /esvo2_config/right.yaml &
-PID_CAM=\$!
-sleep 1
-
 echo "Launching ESVO2..."
 roslaunch /esvo2_launch.launch enable_viz:=$VISUALIZE imu_data_topic:=$IMU_DATA_TOPIC &
 PID_LAUNCH=\$!
@@ -235,7 +267,6 @@ if [ -n "\$PID_PCD" ]; then
     kill "\$PID_PCD" || true
 fi
 kill "\$PID_LAUNCH" || true
-kill "\$PID_CAM" || true
 kill "\$PID_CORE" || true
 
 if [ "$SAVE_PC" = "true" ]; then
@@ -293,7 +324,6 @@ docker run --rm -it \
     -v "$LOGS_DIR:/root/.ros/log" \
     -v "$ESVO2_LAUNCH_FILE:/esvo2_launch.launch:ro" \
     -v "$RUNNER_SCRIPT:/esvo2_runner.sh:ro" \
-    -v "$SRC_PYTHON/publish_camera_info.py:/scripts/publish_camera_info.py:ro" \
     "$ESVO2_IMAGE" \
     bash /esvo2_runner.sh
 

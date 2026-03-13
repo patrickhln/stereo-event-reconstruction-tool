@@ -6,7 +6,7 @@ set -e
 #
 # Options:
 #   --no-viz        Run without RViz
-#   --rate <r>      Bag playback rate (default: 0.3)
+#   --rate <r>      Bag playback rate (default: 0.2)
 #   --save-pc       Save final pointcloud to reconstruction folder
 #   --gpu <mode>    GPU mode: auto|intel|amd|nvidia|cpu (default: auto)
 
@@ -35,7 +35,7 @@ RTABMAP_LAUNCH_FILE="$SCRIPT_DIR/launch/rtabmap/offline_stereo.launch"
 
 # defaults
 VISUALIZE=true
-PLAYBACK_RATE=0.3
+PLAYBACK_RATE=0.2
 SAVE_PC=false
 GPU_MODE=auto
 
@@ -82,7 +82,7 @@ if [[ "$SAVE_PC" == "true" ]]; then
     rm -f "$OUTPUT_DIR/pointcloud.pcd"
     rm -f "$OUTPUT_DIR/pointcloud_cloud.ply"
 fi
-rm -f "$OUTPUT_DIR/rtabmap_odom.txt" "$OUTPUT_DIR/rtabmap_slam.txt" "$OUTPUT_DIR/report.txt"
+rm -f "$OUTPUT_DIR/rtabmap_odom.txt" "$OUTPUT_DIR/rtabmap_slam.txt" "$OUTPUT_DIR/report.csv"
 
 echo "Input bag:      $BAG_FILE"
 echo "Output dir:     $OUTPUT_DIR"
@@ -113,13 +113,43 @@ PID_LAUNCH=\$!
 sleep 8
 
 echo "Playing bag..."
-rosbag play /data/input.bag --clock -r $PLAYBACK_RATE --delay=2 
+rosbag play /data/input.bag --clock -r $PLAYBACK_RATE --delay=2
 
-echo "Bag finished. Wrapping up..."
-sleep 2
+echo "Bag finished. Letting RTAB-Map flush pending work..."
+sleep 5
 
-kill "\$PID_LAUNCH" || true
-kill "\$PID_CORE" || true
+echo "Stopping launched RTAB-Map nodes cleanly..."
+for node in /rtabmapviz /rtabmap /stereo_odometry /stereo/stereo_image_proc; do
+    rosnode kill "\$node" >/dev/null 2>&1 || true
+done
+
+for _ in \$(seq 1 10); do
+    if ! kill -0 "\$PID_LAUNCH" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+kill "\$PID_LAUNCH" >/dev/null 2>&1 || true
+
+if [[ -f /output/rtabmap.db ]]; then
+    echo "Waiting for database writes to settle..."
+    prev_size=-1
+    stable_count=0
+    for _ in \$(seq 1 10); do
+        current_size=\$(stat -c%s /output/rtabmap.db 2>/dev/null || echo 0)
+        if [[ "\$current_size" -gt 0 && "\$current_size" -eq "\$prev_size" ]]; then
+            stable_count=\$((stable_count + 1))
+            if [[ "\$stable_count" -ge 2 ]]; then
+                break
+            fi
+        else
+            stable_count=0
+        fi
+        prev_size=\$current_size
+        sleep 1
+    done
+fi
 
 if [[ -f /output/rtabmap.db ]]; then
     # quick text outputs from db
@@ -132,6 +162,8 @@ if [[ -f /output/rtabmap.db ]]; then
         rtabmap-export --cloud --ascii --output_dir /output --output pointcloud /output/rtabmap.db >/tmp/rtabmap_export.log 2>&1 || true
     fi
 fi
+
+kill "\$PID_CORE" >/dev/null 2>&1 || true
 EOF
 
 chmod +x "$RUNNER_SCRIPT"
@@ -214,6 +246,6 @@ fi
 if [[ -f "$OUTPUT_DIR/rtabmap_slam.txt" ]]; then
     echo "SLAM:$OUTPUT_DIR/rtabmap_slam.txt"
 fi
-if [[ -f "$OUTPUT_DIR/report.txt" ]]; then
-    echo "REP: $OUTPUT_DIR/report.txt"
+if [[ -f "$OUTPUT_DIR/report.csv" ]]; then
+    echo "REP: $OUTPUT_DIR/report.csv"
 fi

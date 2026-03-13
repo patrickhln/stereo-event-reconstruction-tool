@@ -100,8 +100,6 @@ set-calibration <calibration_path>
   - `ba_only.yaml`
   - `hot_then_ba.yaml`
   - `ba_then_hot.yaml`
-- `raw` is the no-filter baseline condition used in ablation studies (no YAML required).
-- Use an explicit config path:
 
 ```bash
 ./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config <session>/config/filters/hot_then_ba.yaml
@@ -117,23 +115,6 @@ set-calibration <calibration_path>
   - `<recording_stem>__<config_stem>.aedat4`
 - Chain order in YAML is the order applied at runtime.
 - Full filter reference (all types + options): `docs/filter_chains.md`
-
-## Convert txt events to h5 (event_cnn_minimal)
-
-Point the converter at a scene/calibration folder (or `intermediate/`) and it creates
-`leftEvents.h5` and `rightEvents.h5` next to the `.txt` files in `intermediate/`.
-
-```bash
-python3 src/python/txt_to_h5.py <session>/scenes/<scene_name>
-python3 src/python/txt_to_h5.py <session>/calibrations/<calib_name>
-```
-
-You can also convert a single file explicitly:
-
-```bash
-python3 src/python/txt_to_h5.py <capture>/intermediate/leftEvents.txt
-python3 src/python/txt_to_h5.py <capture>/intermediate/leftEvents.txt <capture>/intermediate/leftEvents.h5 --overwrite
-```
 
 ## Session Structure
 
@@ -193,10 +174,11 @@ This project integrates the following third-party tools:
 - **ESVO**: Event-based Stereo Visual Odometry - https://github.com/HKUST-Aerial-Robotics/ESVO
 - **ESVO2**: Direct Visual-Intertial Odometry with Stereo Event Cameras: https://github.com/NAIL-HNU/ESVO2
 - **RTAB-Map**: Real-Time Appearance-Based Mapping - https://github.com/introlab/rtabmap
+
 All components are automatically set up by the installation scripts. Original licenses and attributions are preserved.
 
 # ESVO Compatibility Note
 
 The Docker environment provided in this project automatically handles a specific compatibility version for ESVO:
-- **Commit**: `538b576` (Oct 2021)
+- **Commit**: `538b576` 
 - **Reason**: Newer commits of ESVO were found to produce degenerate results on small-scale datasets (like RPG/Indoor).

@@ -1,12 +1,104 @@
 """Generate ESVO mapping/tracking/time-surface config files.
-
-These presets are tuned for this repo's offline workflows.
-See src/python/esvo_tuning_notes.md for rationale and caveats.
+    mapping.yaml
+    tracking.yaml
+    ts_parameters.yaml
 """
 import os
 import argparse
 import yaml
 import numpy as np
+
+# Dataset families used when comparing official presets:
+# - RPG stereo DAVIS240C (UZH RPG): indoor hand-held stereo event-camera scenes in
+#   a motion-capture room; sequences include bin, boxes, desk, monitor, reader.
+#   Dataset source: https://rpg.ifi.uzh.ch/ECCV18_stereo_davis.html
+#   YAML sources:
+#     - ESVO/esvo_core/cfg/mapping/mapping_rpg.yaml
+#     - ESVO/esvo_core/cfg/tracking/tracking_rpg.yaml
+#     - ESVO2/esvo2_core/cfg/mapping/mapping_rpg_AA.yaml
+#     - ESVO2/esvo2_core/cfg/tracking/tracking_rpg_AA.yaml
+# - UPenn / MVSEC indoor_flying (DAVIS346B): Multi Vehicle Stereo Event Camera, hexacopter, driving, handheld
+#   indoor and outdoor environment; mostly translation-dominant motion with hovering segments.
+#   Dataset source: https://daniilidis-group.github.io/mvsec/
+#   YAML sources:
+#     - ESVO/esvo_core/cfg/mapping/mapping_upenn.yaml
+#     - ESVO/esvo_core/cfg/tracking/tracking_upenn.yaml
+#     - ESVO2/esvo2_core/cfg/mapping/mapping_upenn_AA.yaml
+#     - ESVO2/esvo2_core/cfg/tracking/tracking_upenn_AA.yaml
+# - HKUST lab: authors' stereo event-camera recording of a cluttered lab / machine
+#   facility scene.
+#   Dataset source: https://arxiv.org/abs/2007.15548
+#   YAML sources:
+#     - ESVO/esvo_core/cfg/mapping/mapping_hkust.yaml
+#     - ESVO/esvo_core/cfg/tracking/tracking_hkust.yaml
+# - DVXplorer / HNU outdoor: ESVO2 authors' outdoor stereo DVXplorer dataset
+#   with IMU and GNSS; hnu_campus is a closed-loop campus trajectory and
+#   hnu_peachlake is a winding narrow-street sequence.
+#   Dataset source: https://arxiv.org/abs/2410.09374
+#   YAML sources:
+#     - ESVO2/esvo2_core/cfg/mapping/mapping_dvx_AA_mapping.yaml
+#     - ESVO2/esvo2_core/cfg/tracking/tracking_dvx_AA_mapping.yaml
+
+DVX_SHARED_MAPPING_PRESET = {
+    "residual_vis_threshold": 30, 
+    "stdVar_vis_threshold": 1,
+    "age_max_range": 10,
+    "age_vis_threshold": 1,
+    "fusion_radius": 2,
+    "FUSION_STRATEGY": "CONST_FRAMES",
+    "maxNumFusionFrames": 5,
+    "maxNumFusionPoints": 20000,
+    "Denoising": False,
+    "SmoothTimeSurface": True,
+    "Regularization": True,
+    "bVisualizeGlobalPC": True,
+    "visualizeGPC_interval": 0.5,
+    "NumGPC_added_oper_refresh": 10000,
+    "visualize_range": 30,
+    "PROCESS_EVENT_NUM": 10000,
+    "TS_HISTORY_LENGTH": 100,
+    "INIT_SGM_DP_NUM_THRESHOLD": 500,
+    "mapping_rate_hz": 20,
+    "patch_size_X": 15,
+    "patch_size_Y": 7,
+    "LSnorm": "Tdist",
+    "Tdist_nu": 2.182,
+    "Tdist_scale": 17.277,
+    "Tdist_stdvar": 59.763,
+    "BM_half_slice_thickness": 0.001,
+    "BM_step": 3,
+    "BM_ZNCC_Threshold": 0.2,
+    "BM_bUpDownConfiguration": False,
+}
+
+DVX_SHARED_TRACKING_PRESET = {
+    "TS_HISTORY_LENGTH": 100,
+    "REF_HISTORY_LENGTH": 10,
+    "tracking_rate_hz": 100,
+    "patch_size_X": 1,
+    "patch_size_Y": 1,
+    "kernelSize": 5,
+    "MAX_REGISTRATION_POINTS": 2000,
+    "BATCH_SIZE": 300,
+    "MAX_ITERATION": 10,
+    "LSnorm": "Huber",
+    "huber_threshold": 50,
+    "MIN_NUM_EVENTS": 1000,
+    "RegProblemType": 1,
+    "SAVE_TRAJECTORY": True,
+    "SEQUENCE_NAME": "reconstruction",
+    "VISUALIZE_TRAJECTORY": True,
+    "PATH_TO_SAVE_TRAJECTORY": "/output/",
+}
+
+DVX_TS_PRESET = {
+    "use_sim_time": True,
+    "ignore_polarity": True,
+    "time_surface_mode": 0,
+    "decay_ms": 20,
+    "median_blur_kernel_size": 1,
+    "max_event_queue_len": 20,
+}
 
 SENSOR_PROFILES = {
     'davis346': {
@@ -20,14 +112,14 @@ SENSOR_PROFILES = {
         'width': 640,
         'height': 480,
         'max_eps': 165e6,
-        'decay_ms': 10,
-        'ts_queue': 10,
+        'decay_ms': 20,
+        'ts_queue': 20,
         'tracking_rate_hz': 100,
         'mapping_rate_hz': 20,
-        'tracking_ts_history': 80,
-        'mapping_ts_history': 60,
-        'batch_size': 120,
-        'process_event_num': 10000,
+        'tracking_ts_history': 100,
+        'mapping_ts_history': 100,
+        'batch_size': 300,
+        'process_event_num': 10000, 
     },
 }
 
@@ -41,6 +133,17 @@ def detect_sensor_profile(width, height):
 
 def is_dvxplorer_profile(profile):
     return profile['max_eps'] > 50e6
+
+def compute_disparity_bounds(baseline, focal_length, min_depth, max_depth, disparity_cap):
+    computed_max_disp = baseline * focal_length / min_depth
+    computed_min_disp = baseline * focal_length / max_depth
+
+    min_disparity = max(0, int(np.floor(0.95 * computed_min_disp)))
+    max_disparity = min(disparity_cap, int(np.ceil(1.05 * computed_max_disp)))
+    if max_disparity <= min_disparity:
+        max_disparity = min(disparity_cap, min_disparity + 1)
+
+    return min_disparity, max_disparity, computed_min_disp, computed_max_disp
 
 def load_esvo_calib(esvo_dir):
     """Load left/right ESVO calibration YAML files."""
@@ -62,83 +165,60 @@ def compute_focal_length(left_calib):
     fy = K[1, 1]
     return (fx + fy) / 2
 
-def generate_mapping_config(output_path, width, height, baseline, focal_length, min_depth=0.5, max_depth=5.0):
+def generate_mapping_config(output_path, width, height, baseline, focal_length, min_depth=0.5, max_depth=10.0):
     """Generate mapping.yaml."""
     profile = detect_sensor_profile(width, height)
     is_dvxplorer = is_dvxplorer_profile(profile)
 
-    computed_max_disp = baseline * focal_length / min_depth
-    computed_min_disp = baseline * focal_length / max_depth
-
-    scaled_cap = int(np.floor(0.25 * width))
-
-    min_disparity = max(1, int(np.floor(0.95 * computed_min_disp)))
-    max_disparity = min(int(np.ceil(1.05 * computed_max_disp)), scaled_cap)
-
-    if max_disparity - min_disparity < 24:
-        max_disparity = min(min_disparity + 48, scaled_cap)
-
-    if is_dvxplorer:
-        patch_x = 21
-        patch_y = 11
-    else:
-        patch_scale = width / 346.0
-        patch_x = int(15 * patch_scale)
-        patch_y = int(7 * patch_scale)
-        if patch_x % 2 == 0:
-            patch_x += 1
-        if patch_y % 2 == 0:
-            patch_y += 1
-        patch_x = max(15, min(patch_x, 31))
-        patch_y = max(7, min(patch_y, 15))
+    disparity_cap = 150 if is_dvxplorer else max(40, width // 2)
+    min_disparity, max_disparity, computed_min_disp, computed_max_disp = compute_disparity_bounds(
+        baseline, focal_length, min_depth, max_depth, disparity_cap
+    )
 
     inv_depth_min = 1.0 / max_depth
     inv_depth_max = 1.0 / min_depth
 
-    config = {
+    if is_dvxplorer:
+        config = dict(DVX_SHARED_MAPPING_PRESET)
+    else:
+        config = {
+            'residual_vis_threshold': 20,
+            'stdVar_vis_threshold': 0.15,
+            'age_max_range': 10,
+            'age_vis_threshold': 1,
+            'fusion_radius': 0,
+            'FUSION_STRATEGY': 'CONST_POINTS',
+            'maxNumFusionFrames': 40,
+            'maxNumFusionPoints': 5000,
+            'Denoising': True,
+            'SmoothTimeSurface': False,
+            'Regularization': True,
+            'bVisualizeGlobalPC': True,
+            'visualizeGPC_interval': 3,
+            'NumGPC_added_oper_refresh': 1500,
+            'visualize_range': min(max_depth, 5.0),
+            'PROCESS_EVENT_NUM': profile.get('process_event_num', 1000),
+            'TS_HISTORY_LENGTH': profile.get('mapping_ts_history', 100),
+            'INIT_SGM_DP_NUM_THRESHOLD': 500,
+            'mapping_rate_hz': profile.get('mapping_rate_hz', 20),
+            'patch_size_X': 15,
+            'patch_size_Y': 7,
+            'LSnorm': 'Tdist',
+            'Tdist_nu': 2.1897,
+            'Tdist_scale': 16.6397,
+            'Tdist_stdvar': 56.5347,
+            'BM_half_slice_thickness': 0.001,
+            'BM_step': 1,
+            'BM_ZNCC_Threshold': 0.1,
+            'BM_bUpDownConfiguration': False,
+        }
+
+    config.update({
         'invDepth_min_range': round(inv_depth_min, 2),
         'invDepth_max_range': round(inv_depth_max, 2),
-
-        'residual_vis_threshold': 14 if is_dvxplorer else 20,
-        'stdVar_vis_threshold': 0.015 if is_dvxplorer else 0.15,
-        'age_max_range': 10,
-        'age_vis_threshold': 0 if is_dvxplorer else 1,
-
-        'fusion_radius': 0,
-        'FUSION_STRATEGY': 'CONST_FRAMES' if is_dvxplorer else 'CONST_POINTS',
-        'maxNumFusionFrames': 14 if is_dvxplorer else 40,
-        'maxNumFusionPoints': 8000 if is_dvxplorer else 5000,
-
-        'Denoising': False if is_dvxplorer else True,
-        'SmoothTimeSurface': False,
-        'Regularization': True,
-
-        'bVisualizeGlobalPC': True,
-        'visualizeGPC_interval': 3,
-        'NumGPC_added_oper_refresh': 1500,  # note: ESVO source has typo "oper" not "per"
-        'visualize_range': min(max_depth, 5.0),
-
-        'PROCESS_EVENT_NUM': profile.get('process_event_num', 1000),
-        'MAX_NUM_Event_INVOLVED': 60000 if is_dvxplorer else 10000,
-        'TS_HISTORY_LENGTH': profile.get('mapping_ts_history', 100),
-        'INIT_SGM_DP_NUM_THRESHOLD': 500,
-        'mapping_rate_hz': profile.get('mapping_rate_hz', 20),
-
-        'patch_size_X': patch_x,
-        'patch_size_Y': patch_y,
-
-        'Lnorm': 'Tdist',
-        'Tdist_nu': 2.1897,
-        'Tdist_scale': 16.6397,
-        'Tdist_stdvar': 56.5347,
-
-        'BM_half_slice_thickness': 0.0020 if is_dvxplorer else 0.001,
-        'BM_min_disparity': 3,
-        'BM_max_disparity': 47,
-        'BM_step': 1,
-        'BM_ZNCC_Threshold': 0.13 if is_dvxplorer else 0.1,
-        'BM_bUpDownConfiguration': False,
-    }
+        'BM_min_disparity': min_disparity,
+        'BM_max_disparity': max_disparity,
+    })
 
     with open(output_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -151,12 +231,13 @@ def generate_mapping_config(output_path, width, height, baseline, focal_length, 
     print(f"  - Disparity range: {min_disparity} - {max_disparity} (geometry: {computed_min_disp:.1f} - {computed_max_disp:.1f})")
     print(f"  - Actual depth range: {actual_min_depth:.2f}m - {actual_max_depth:.2f}m")
     print(f"  - Inv depth range: {inv_depth_min:.2f} - {inv_depth_max:.2f}")
-    print(f"  - Patch size: {patch_x}x{patch_y}")
+    print(f"  - Preset: {'official_dvx_shared_analog' if is_dvxplorer else 'generic'}")
+    print(f"  - Patch size: {config['patch_size_X']}x{config['patch_size_Y']}")
     print(f"  - mapping_rate_hz: {config['mapping_rate_hz']}")
     print(f"  - BM_step: {config['BM_step']}")
     
 
-def generate_tracking_config(output_path, width, height, min_depth=0.5, max_depth=5.0):
+def generate_tracking_config(output_path, width, height, min_depth=0.5, max_depth=10.0):
     """Generate tracking.yaml."""
     profile = detect_sensor_profile(width, height)
     is_dvxplorer = is_dvxplorer_profile(profile)
@@ -164,33 +245,32 @@ def generate_tracking_config(output_path, width, height, min_depth=0.5, max_dept
     inv_depth_min = 1.0 / max_depth
     inv_depth_max = 1.0 / min_depth
     
-    config = {
+    if is_dvxplorer:
+        config = dict(DVX_SHARED_TRACKING_PRESET)
+    else:
+        config = {
+            'TS_HISTORY_LENGTH': profile.get('tracking_ts_history', 100),
+            'REF_HISTORY_LENGTH': 10,
+            'tracking_rate_hz': profile.get('tracking_rate_hz', 100),
+            'patch_size_X': 1,
+            'patch_size_Y': 1,
+            'kernelSize': 5,
+            'MAX_REGISTRATION_POINTS': 2000,
+            'BATCH_SIZE': profile.get('batch_size', 300),
+            'MAX_ITERATION': 10,
+            'LSnorm': 'Huber',
+            'huber_threshold': 50,
+            'MIN_NUM_EVENTS': 1000,
+            'RegProblemType': 1,
+            'SAVE_TRAJECTORY': True,
+            'SEQUENCE_NAME': 'reconstruction',
+            'VISUALIZE_TRAJECTORY': True,
+            'PATH_TO_SAVE_TRAJECTORY': '/output/',
+        }
+    config.update({
         'invDepth_min_range': round(inv_depth_min, 2),
         'invDepth_max_range': round(inv_depth_max, 2),
-        
-        'TS_HISTORY_LENGTH': profile.get('tracking_ts_history', 100),
-        'REF_HISTORY_LENGTH': 5 if is_dvxplorer else 10,
-        'tracking_rate_hz': profile.get('tracking_rate_hz', 100),
-        
-        'patch_size_X': 1,
-        'patch_size_Y': 1,
-        'kernelSize': 5,
-        
-        'MAX_REGISTRATION_POINTS': 4000 if is_dvxplorer else 2000,
-        'BATCH_SIZE': profile.get('batch_size', 200),
-        'MAX_ITERATION': 15 if is_dvxplorer else 10,
-        
-        'LSnorm': 'Huber',
-        'huber_threshold': 25 if is_dvxplorer else 50,
-        'MIN_NUM_EVENTS': 1500 if is_dvxplorer else 1000,
-        
-        'RegProblemType': 1,
-        
-        'SAVE_TRAJECTORY': True,
-        'SEQUENCE_NAME': 'reconstruction',
-        'VISUALIZE_TRAJECTORY': True,
-        'PATH_TO_SAVE_TRAJECTORY': '/output/',
-    }
+    })
     
     with open(output_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -207,14 +287,17 @@ def generate_ts_parameters(output_path, width, height):
     profile = detect_sensor_profile(width, height)
     is_dvxplorer = is_dvxplorer_profile(profile)
 
-    config = {
-        'use_sim_time': True,
-        'ignore_polarity': True,
-        'time_surface_mode': 0,
-        'decay_ms': profile['decay_ms'],
-        'median_blur_kernel_size': 0 if is_dvxplorer else 1,
-        'max_event_queue_len': profile['ts_queue'],
-    }
+    if is_dvxplorer:
+        config = dict(DVX_TS_PRESET)
+    else:
+        config = {
+            'use_sim_time': True,
+            'ignore_polarity': True,
+            'time_surface_mode': 0,
+            'decay_ms': profile['decay_ms'],
+            'median_blur_kernel_size': 1,
+            'max_event_queue_len': profile['ts_queue'],
+        }
     
     with open(output_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -223,7 +306,7 @@ def generate_ts_parameters(output_path, width, height):
     print(f"  - decay_ms: {config['decay_ms']} (effective window: ~{config['decay_ms'] * 5}ms at 1% threshold)")
     print(f"  - max_event_queue_len: {config['max_event_queue_len']}")
 
-def generate_all_configs(session_path, min_depth=0.5, max_depth=5.0):
+def generate_all_configs(session_path, min_depth=0.5, max_depth=10.0):
     esvo_config_dir = os.path.join(session_path, "config", "esvo")
 
 
@@ -269,8 +352,7 @@ def generate_all_configs(session_path, min_depth=0.5, max_depth=5.0):
     )
     
     print(f"\nAll configs written to: {esvo_config_dir}")
-    print(f"\nRecommended playback rate for this sensor: "
-          f"{'0.06' if profile['max_eps'] > 50e6 else '0.2'}")
+    print("\nRecommended playback rate for this sensor: 0.2")
     
 
 def main():
@@ -289,8 +371,8 @@ def main():
     parser.add_argument(
         "--max-depth",
         type=float,
-        default=5.0,
-        help="Maximum expected scene depth in meters (default: 5.0)"
+        default=10.0,
+        help="Maximum expected scene depth in meters (default: 10.0)"
     )
     
     args = parser.parse_args()

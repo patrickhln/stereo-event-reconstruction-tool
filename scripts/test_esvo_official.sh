@@ -228,11 +228,6 @@ roscore &
 ROSCORE_PID=$!
 sleep 2
 
-echo 'Starting Camera Info Publisher (1000 Hz)...'
-python3 /scripts/publish_camera_info.py /esvo_config/left.yaml /esvo_config/right.yaml &
-CAMINFO_PID=$!
-sleep 1
-
 echo 'Launching ESVO (Pre-built)...'
 roslaunch /esvo_launch.launch &
 LAUNCH_PID=$!
@@ -275,7 +270,6 @@ else:
 PYSCRIPT
 
 # Cleanup
-kill $CAMINFO_PID 2>/dev/null || true
 kill $LAUNCH_PID 2>/dev/null || true
 kill $ROSCORE_PID 2>/dev/null || true
 RUNNER_EOF
@@ -304,7 +298,6 @@ docker run --rm -it \
     -v "$LOGS_DIR:/root/.ros/log" \
     -v "$LAUNCH_FILE:/esvo_launch.launch:ro" \
     -v "$RUNNER_SCRIPT:/esvo_runner.sh:ro" \
-    -v "$PROJECT_ROOT/src/python/publish_camera_info.py:/scripts/publish_camera_info.py:ro" \
     sert-esvo-kalibr:latest \
     bash /esvo_runner.sh "$PLAYBACK_RATE"
 

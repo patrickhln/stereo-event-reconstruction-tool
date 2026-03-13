@@ -6,13 +6,23 @@ set -e
 #
 # Options:
 #   --no-viz        Run without visualization (headless)
-#   --rate <r>      Bag playback rate (default: 0.06)
+#   --rate <r>      Bag playback rate (default: 0.2)
+#   --min-depth <m> Minimum expected scene depth in meters (default: 0.5)
+#   --max-depth <m> Maximum expected scene depth in meters (default: 10.0)
 #   --save-pc       Save final pointcloud to file
 #   --gpu <mode>    GPU mode: auto|intel|amd|nvidia|cpu (default: auto)
 
 if [[ $# -lt 2 ]]; then
     echo "Usage: $0 <session_path> <scene_name> [OPTIONS]"
     echo "Example: $0 ./session scene_test"
+    echo ""
+    echo "Options:"
+    echo "  --no-viz      Run without visualization"
+    echo "  --rate <r>    Bag playback rate (default: 0.2)"
+    echo "  --min-depth   Minimum expected scene depth in meters (default: 0.5)"
+    echo "  --max-depth   Maximum expected scene depth in meters (default: 10.0)"
+    echo "  --save-pc     Save final pointcloud"
+    echo "  --gpu <mode>  GPU mode: auto|intel|amd|nvidia|cpu"
     exit 1
 fi
 
@@ -34,17 +44,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SRC_PYTHON="$PROJECT_ROOT/src/python"
 ESVO_LAUNCH_FILE="$SCRIPT_DIR/launch/esvo/offline_system.launch"
+ESVO_IMAGE="sert-esvo-kalibr:latest"
 
 # Defaults
 VISUALIZE=true
-PLAYBACK_RATE=0.06  # DVXplorer-safe default on (my) laptop CPU
+PLAYBACK_RATE=0.2
+MIN_DEPTH=0.5
+MAX_DEPTH=10.0
 SAVE_PC=false
 GPU_MODE=auto
+TARGET_SIM_TS_RATE_HZ=100
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-viz) VISUALIZE=false; shift ;;
         --rate) PLAYBACK_RATE="$2"; shift 2 ;;
+        --min-depth) MIN_DEPTH="$2"; shift 2 ;;
+        --max-depth) MAX_DEPTH="$2"; shift 2 ;;
         --save-pc) SAVE_PC=true; shift ;;
         --gpu) GPU_MODE="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -54,6 +70,7 @@ done
 echo "=== ESVO Runner ==="
 echo "Session: $SESSION_PATH"
 echo "Scene:   $SCENE_DIR"
+echo "Depth:   ${MIN_DEPTH}m - ${MAX_DEPTH}m"
 
 # try to source conda if available to use sert-python for config generation
 if command -v conda >/dev/null 2>&1; then
@@ -71,6 +88,18 @@ BAG_FILE="$SCENE_DIR/intermediate/scene_events.bag"
 if [[ ! -f "$BAG_FILE" ]]; then
     echo "Error: Bag file not found: $BAG_FILE"
     echo "Please ensure the dataset is processed (aedat4_to_bag) before running ESVO."
+    exit 1
+fi
+
+echo "Checking bag for camera_info topics ..."
+if ! docker run --rm \
+    -v "$BAG_FILE:/data/input.bag:ro" \
+    "$ESVO_IMAGE" \
+    /bin/bash -lc "rosbag info /data/input.bag | grep -q '/davis/left/camera_info' && rosbag info /data/input.bag | grep -q '/davis/right/camera_info'"; then
+    echo "Error: ESVO requires /davis/left/camera_info and /davis/right/camera_info in:"
+    echo "  $BAG_FILE"
+    echo "Regenerate the bag with calibration embedded, for example:"
+    echo "  python3 src/python/aedat4_to_bag.py --path <scene> --calibration <session>/config/esvo"
     exit 1
 fi
 
@@ -110,39 +139,25 @@ fi
 echo "Generating ESVO runtime configs (mapping.yaml, tracking.yaml, ts_parameters.yaml)..."
 python3 "$SRC_PYTHON/generate_esvo_config.py" \
     --session "$SESSION_PATH" \
-    --min-depth 0.5 \
-    --max-depth 5.0
-
-# Read tracking rate from generated tracking.yaml to keep /sync aligned.
-TRACKING_RATE_HZ=$(python3 - <<PY
-import yaml
-with open("$ESVO_CONFIG_DIR/tracking.yaml", "r", encoding="utf-8") as f:
-    cfg = yaml.safe_load(f) or {}
-rate = cfg.get("tracking_rate_hz", 50)
-try:
-    rate = int(rate)
-except Exception:
-    rate = 50
-print(max(rate, 1))
-PY
-)
+    --min-depth "$MIN_DEPTH" \
+    --max-depth "$MAX_DEPTH"
 
 
 OUTPUT_DIR="$SCENE_DIR/reconstruction/esvo"
 mkdir -p "$OUTPUT_DIR"
 
-# Sync rate (wall-clock Hz) = ceil(playback_rate * tracking_rate_hz)
-# Ceil avoids undersupplying time surfaces when the product is non-integer.
+# Official offline behavior: keep time-surface generation at 100 Hz in
+# simulation time and slow only wall-clock playback for weak hardware.
 SYNC_RATE=$(python3 - <<PY
 import math
 playback_rate = float("$PLAYBACK_RATE")
-tracking_rate = int("$TRACKING_RATE_HZ")
-print(max(1, int(math.ceil(playback_rate * tracking_rate))))
+target_rate = int("$TARGET_SIM_TS_RATE_HZ")
+print(max(1, int(math.ceil(playback_rate * target_rate))))
 PY
 )
 
 echo "Playback rate: $PLAYBACK_RATE"
-echo "Tracking rate: $TRACKING_RATE_HZ"
+echo "Time-surface rate (sim time): $TARGET_SIM_TS_RATE_HZ"
 echo "Sync rate: $SYNC_RATE"
 
 # Create Runner Script (for inside Docker)
@@ -163,13 +178,6 @@ echo "Starting ROSCore..."
 roscore &
 PID_CORE=\$!
 sleep 2
-
-# Essential: Publish Camera Info
-# Even if bag has it, this ensures we use the exact calibration from the configs.
-echo "Publishing Camera Info..."
-python3 /scripts/publish_camera_info.py /esvo_config/left.yaml /esvo_config/right.yaml &
-PID_CAM=\$!
-sleep 1
 
 echo "Launching ESVO..."
 roslaunch /esvo_launch.launch enable_viz:=$VISUALIZE sync_rate:=$SYNC_RATE &
@@ -203,7 +211,6 @@ echo "Bag finished. Terminating..."
 # kill \$PID_KICK || true
 # [ ! -z "\$PID_PCD" ] && kill \$PID_PCD || true
 # kill \$PID_LAUNCH || true
-# kill \$PID_CAM || true
 # kill \$PID_CORE || true
 
 # Graceful shutdown without forcing a huge /clock jump
@@ -212,7 +219,6 @@ sleep 2
 
 [ ! -z "\$PID_PCD" ] && kill \$PID_PCD || true
 kill \$PID_LAUNCH || true
-kill \$PID_CAM || true
 kill \$PID_CORE || true
 
 # Process PCD
@@ -272,8 +278,7 @@ echo "Running ESVO in Docker..."
 #     -v "$OUTPUT_DIR:/output" \
 #     -v "$LAUNCH_FILE:/esvo_launch.launch:ro" \
 #     -v "$RUNNER_SCRIPT:/esvo_runner.sh:ro" \
-#     -v "$SRC_PYTHON/publish_camera_info.py:/scripts/publish_camera_info.py:ro" \
-#     sert-esvo-kalibr:latest \
+#     "$ESVO_IMAGE" \
 #     bash /esvo_runner.sh
 
 docker run --rm -it \
@@ -286,8 +291,7 @@ docker run --rm -it \
     -v "$OUTPUT_DIR:/output" \
     -v "$ESVO_LAUNCH_FILE:/esvo_launch.launch:ro" \
     -v "$RUNNER_SCRIPT:/esvo_runner.sh:ro" \
-    -v "$SRC_PYTHON/publish_camera_info.py:/scripts/publish_camera_info.py:ro" \
-    sert-esvo-kalibr:latest \
+    "$ESVO_IMAGE" \
     bash /esvo_runner.sh
 
 echo "Done. Results in $OUTPUT_DIR"
