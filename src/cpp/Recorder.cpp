@@ -119,6 +119,7 @@ namespace StereoRecorder
 
 		std::filesystem::path out = rawDir / "stereo_recording.aedat4";
 		dv::io::StereoCameraWriter writer(out.string(), *leftCamera, *rightCamera);
+		std::mutex writerMutex; // protects writer since two recording threads share it
 
 		std::mutex queueMutex;
 		std::condition_variable visQueueCondition;
@@ -131,18 +132,21 @@ namespace StereoRecorder
 		// https://gitlab.com/inivation/dv/dv-processing/-/blob/master/samples/io/stereo-live-writer/stereo-live-writer.cpp#L26
 		dv::io::DataReadHandler leftHandler, rightHandler;
 
-		leftHandler.mEventHandler = [&](const dv::EventStore &events) 
+		leftHandler.mEventHandler = [&](const dv::EventStore &events)
 		{
 			// Priority 1: write events
-			writer.left.writeEvents(events);	
+			{
+				std::scoped_lock<std::mutex> lock(writerMutex);
+				writer.left.writeEvents(events);
+			}
 
-			// Priority 2: send events to visualization thread 
+			// Priority 2: send events to visualization thread
 			if (showVisualization)
 			{
-				auto leftEventPtr = std::make_shared<dv::EventStore>(events);		
+				auto leftEventPtr = std::make_shared<dv::EventStore>(events);
 				{
 					std::scoped_lock<std::mutex> lock(queueMutex);
-					
+
 					if (leftQueue.size() >= MAX_QUEUE_SIZE)
 					{
 						droppedVisFrames++;
@@ -157,34 +161,40 @@ namespace StereoRecorder
 		{
 			leftHandler.mFrameHandler = [&](const dv::Frame &frame)
 			{
+				std::scoped_lock<std::mutex> lock(writerMutex);
 				writer.left.writeFrame(frame);
 			};
 		}
-		if (leftHasImuStream) 
+		if (leftHasImuStream)
 		{
 				leftHandler.mImuHandler = [&](const dv::IMUPacket &imu)
 				{
+					std::scoped_lock<std::mutex> lock(writerMutex);
 					writer.left.writeImuPacket(imu);
 				};
 		}
-		if (leftHasTriggerStream) 
+		if (leftHasTriggerStream)
 		{
 				leftHandler.mTriggersHandler = [&](const dv::TriggerPacket &triggers)
 				{
+					std::scoped_lock<std::mutex> lock(writerMutex);
 					writer.left.writeTriggerPacket(triggers);
 				};
 		}
 
-		rightHandler.mEventHandler = [&](const dv::EventStore &events) 
+		rightHandler.mEventHandler = [&](const dv::EventStore &events)
 		{
-			writer.right.writeEvents(events);	
+			{
+				std::scoped_lock<std::mutex> lock(writerMutex);
+				writer.right.writeEvents(events);
+			}
 
 			if (showVisualization)
 			{
-				auto rightEventPtr = std::make_shared<dv::EventStore>(events);		
+				auto rightEventPtr = std::make_shared<dv::EventStore>(events);
 				{
 					std::scoped_lock<std::mutex> lock(queueMutex);
-					
+
 					if (rightQueue.size() >= MAX_QUEUE_SIZE)
 					{
 						droppedVisFrames++;
@@ -199,35 +209,48 @@ namespace StereoRecorder
 		{
 			rightHandler.mFrameHandler = [&](const dv::Frame &frame)
 			{
+				std::scoped_lock<std::mutex> lock(writerMutex);
 				writer.right.writeFrame(frame);
 			};
 		}
-		if (rightHasImuStream) 
+		if (rightHasImuStream)
 		{
 				rightHandler.mImuHandler = [&](const dv::IMUPacket &imu)
 				{
+					std::scoped_lock<std::mutex> lock(writerMutex);
 					writer.right.writeImuPacket(imu);
 				};
 		}
-		if (rightHasTriggerStream) 
+		if (rightHasTriggerStream)
 		{
 				rightHandler.mTriggersHandler = [&](const dv::TriggerPacket &triggers)
 				{
+					std::scoped_lock<std::mutex> lock(writerMutex);
 					writer.right.writeTriggerPacket(triggers);
 				};
 		}
 
 
-		// recording (producer) thread
-		std::thread recordingThread([&]() {
-			Log::info("Starting the recording!");
-			while (!stopSignal.load() && leftCamera->isRunning() && rightCamera->isRunning())
+		// separate recording threads per camera to avoid one camera's disk I/O
+		// starving the other camera's USB buffer under high event rates
+		std::thread leftRecordingThread([&]() {
+			Log::info("Starting left camera recording!");
+			while (!stopSignal.load() && leftCamera->isRunning())
 			{
 				if (!leftCamera->handleNext(leftHandler)) break;
+			}
+			visQueueCondition.notify_all();
+			Log::info("Left recording thread finished");
+		});
+
+		std::thread rightRecordingThread([&]() {
+			Log::info("Starting right camera recording!");
+			while (!stopSignal.load() && rightCamera->isRunning())
+			{
 				if (!rightCamera->handleNext(rightHandler)) break;
 			}
 			visQueueCondition.notify_all();
-			Log::info("Recording Thread Finished");
+			Log::info("Right recording thread finished");
 		});
 
 		// visualization loop (main thread)
@@ -311,8 +334,10 @@ namespace StereoRecorder
 		stopSignal.store(true);
 		visQueueCondition.notify_all();
 		
-		if (recordingThread.joinable())
-			recordingThread.join();
+		if (leftRecordingThread.joinable())
+			leftRecordingThread.join();
+		if (rightRecordingThread.joinable())
+			rightRecordingThread.join();
 
 		return EXIT_SUCCESS;
 
