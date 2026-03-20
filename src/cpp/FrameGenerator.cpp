@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <sstream>
 #include <vector>
 
 #include <dv-processing/core/core.hpp>
@@ -43,13 +44,23 @@ namespace FrameGen
 
 		std::string line;
 		// Skip the first "Do not change" line
-		std::getline(file, line); 
-		
+		std::getline(file, line);
+
 		if (std::getline(file, line)) meta.leftCamName = line;
-		
-		std::getline(file, line); 
-		
+
+		if (std::getline(file, line))
+		{
+			std::istringstream iss(line);
+			iss >> meta.leftWidth >> meta.leftHeight;
+		}
+
 		if (std::getline(file, line)) meta.rightCamName = line;
+
+		if (std::getline(file, line))
+		{
+			std::istringstream iss(line);
+			iss >> meta.rightWidth >> meta.rightHeight;
+		}
 
 		return meta;	
 	}
@@ -86,61 +97,68 @@ namespace FrameGen
 		
 		dv::io::StereoCameraRecording recording = dv::io::StereoCameraRecording(inputAedat4, leftCamName, rightCamName);
 		
-		if (recording.getLeftReader().isEventStreamAvailable() && recording.getRightReader().isEventStreamAvailable())
+		if (!recording.getLeftReader().isEventStreamAvailable() || !recording.getRightReader().isEventStreamAvailable())
 		{
-			size_t leftLineCount = 0;
-			size_t rightLineCount = 0;
+			Log::error("Event streams not available in recording: ", inputAedat4.string());
+			return EXIT_FAILURE;
+		}
 
-			std::filesystem::path leftOutPath = outputDir / "leftEvents.txt";
-			if (!std::filesystem::exists(leftOutPath))
-			{
-				std::ofstream leftOutFile(leftOutPath);
-				leftOutFile << 640 << " " << 480 << "\n";
-				// TODO: which recording?!
-				Log::info("Converting .aedat4 recording to .txt in preperation for E2VID:");
-				Log::info("Processing left events...");
-				while (true) {
-					auto leftEvents = recording.getLeftReader().getNextEventBatch();
-					// dv::EventStore sliced;
-					// for (size_t i = 0; i < (leftEvents->size()-1); i++)
-					// {
-					// 	sliced = leftEvents->slice(i, i+1);
-					// }
-					if(!leftEvents.has_value())
-						break;
-					for (const dv::Event &ev : *leftEvents)
-					{
+		auto leftRes = recording.getLeftReader().getEventResolution();
+		auto rightRes = recording.getRightReader().getEventResolution();
 
-						// E2VID expects timestamps in seconds (float), not microseconds
-						leftOutFile << std::fixed << std::setprecision(6) << (ev.timestamp() / 1e6) << " " << ev.x() << " " << ev.y() << " " << ev.polarity() << "\n";		
-						leftLineCount++;
-					}
+		if (!leftRes.has_value() || !rightRes.has_value())
+		{
+			Log::error("Could not determine event stream resolution from recording: ", inputAedat4.string());
+			return EXIT_FAILURE;
+		}
+
+		Log::info("Left resolution:  ", leftRes->width, "x", leftRes->height);
+		Log::info("Right resolution: ", rightRes->width, "x", rightRes->height);
+
+		size_t leftLineCount = 0;
+		size_t rightLineCount = 0;
+
+		std::filesystem::path leftOutPath = outputDir / "leftEvents.txt";
+		if (!std::filesystem::exists(leftOutPath))
+		{
+			std::ofstream leftOutFile(leftOutPath);
+			leftOutFile << leftRes->width << " " << leftRes->height << "\n";
+			Log::info("Converting .aedat4 recording to .txt in preperation for E2VID:");
+			Log::info("Processing left events...");
+			while (true) {
+				auto leftEvents = recording.getLeftReader().getNextEventBatch();
+				if(!leftEvents.has_value())
+					break;
+				for (const dv::Event &ev : *leftEvents)
+				{
+					// E2VID expects timestamps in seconds (float), not microseconds
+					leftOutFile << std::fixed << std::setprecision(6) << (ev.timestamp() / 1e6) << " " << ev.x() << " " << ev.y() << " " << ev.polarity() << "\n";
+					leftLineCount++;
 				}
-				leftOutFile.close();
-				Log::info("Finished processing!\n","Left file has ", leftLineCount, " lines");
 			}
-			std::filesystem::path rightOutPath = outputDir / "rightEvents.txt";
-			if (!std::filesystem::exists(rightOutPath))
-			{
-				std::ofstream rightOutFile(rightOutPath);
-				rightOutFile << 640 << " " << 480 << "\n";
-				Log::info("Processing right events...");
-				while (true) {
-					auto rightEvents = recording.getRightReader().getNextEventBatch();
-					if(!rightEvents.has_value())
-						break;
-					for (const dv::Event &ev : *rightEvents)
-					{
-						// rightOutFile<< ev.timestamp() << " " << ev.x() << " " << ev.y() << " " << ev.polarity() << "\n";		
-						// E2VID expects timestamps in seconds (float), not microseconds
-						rightOutFile << std::fixed << std::setprecision(6) << (ev.timestamp() / 1e6) << " " << ev.x() << " " << ev.y() << " " << ev.polarity() << "\n";		
-						rightLineCount++;
-					}
+			leftOutFile.close();
+			Log::info("Finished processing!\n","Left file has ", leftLineCount, " lines");
+		}
+		std::filesystem::path rightOutPath = outputDir / "rightEvents.txt";
+		if (!std::filesystem::exists(rightOutPath))
+		{
+			std::ofstream rightOutFile(rightOutPath);
+			rightOutFile << rightRes->width << " " << rightRes->height << "\n";
+			Log::info("Processing right events...");
+			while (true) {
+				auto rightEvents = recording.getRightReader().getNextEventBatch();
+				if(!rightEvents.has_value())
+					break;
+				for (const dv::Event &ev : *rightEvents)
+				{
+					// E2VID expects timestamps in seconds (float), not microseconds
+					rightOutFile << std::fixed << std::setprecision(6) << (ev.timestamp() / 1e6) << " " << ev.x() << " " << ev.y() << " " << ev.polarity() << "\n";
+					rightLineCount++;
 				}
-				rightOutFile.close();
-				Log::info("Finished processing!\n","Right file has ", rightLineCount, " lines");
-				Log::warn("The files ", leftOutPath, ", and ", rightOutPath, " were created. However they are quiet large. Consider removing them when E2VID finished the frame generation");			
 			}
+			rightOutFile.close();
+			Log::info("Finished processing!\n","Right file has ", rightLineCount, " lines");
+			Log::warn("The files ", leftOutPath, ", and ", rightOutPath, " were created. However they are quiet large. Consider removing them when E2VID finished the frame generation");
 		}
 
 		return EXIT_SUCCESS;

@@ -8,6 +8,8 @@ namespace FrameGen
 	struct CameraMetadata
 	{
 		std::string leftCamName, rightCamName;
+		int leftWidth = 0, leftHeight = 0;
+		int rightWidth = 0, rightHeight = 0;
 	};
 
 	struct RenderOptions
