@@ -246,7 +246,7 @@ def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths,
 
 def main():
     parser = argparse.ArgumentParser(description="Convert stereo frames to ROS bag")
-    parser.add_argument("--path", required=True, help="Path to capture directory (should contain frames/left and frames/right)")
+    parser.add_argument("--path", required=True, help="Path to branch root (should contain frames/left and frames/right)")
     parser.add_argument("--max_diff_ms", type=float, default=10.0, help="Max timestamp diff for matching timestamps of frames")
     parser.add_argument("--camchain", required=False, default=None, help="Kalibr camchain yaml (optional, adds camera_info)")
 

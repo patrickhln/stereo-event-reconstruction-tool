@@ -60,37 +60,41 @@ cd scripts
 
 ```bash
 # 1. Record calibration (creates 'lab/' session in current directory)
-./build/Debug/sert record lab -t calib
+./sert record lab -t calib
 
 # 2. Convert events to frames using E2VID
-./build/Debug/sert render lab/calibrations/calib_01
+./sert render lab/calibrations/calib_01
 
 # 3. Run Kalibr calibration (with target config)
-./build/Debug/sert calibrate lab/calibrations/calib_01 \
+./sert calibrate lab/calibrations/calib_01 \
     -t checkerboard --config 8 6 0.068 0.068
 
 # 4. Record a scene
-./build/Debug/sert record lab -t scene -n outdoor
+./sert record lab -t scene -n outdoor
 
-# 5. Filter with explicit config path
-./build/Debug/sert filter lab/scenes/outdoor/raw/stereo_recording.aedat4 --config lab/config/filters/hot_then_ba.yaml
+# 5. Create a filtered sibling branch from the baseline capture
+./sert filter lab/scenes/outdoor --config lab/config/filters/hot_then_ba.yaml
 ```
+
+A path such as `lab/scenes/outdoor` is a capture group. It contains the baseline `unfiltered/` branch and optional sibling branches such as `filtered_hot_then_ba/`. Rendering, calibration, bag conversion, and downstream reconstruction operate on a chosen branch root.
 
 For more info on calibration targets, see: https://github.com/ethz-asl/kalibr/wiki/calibration-targets
 
 **Commands:**
 ```
 record [<session>] -t calib|scene [-n <name>] [-v]
-render <capture_path>
-filter <recording.aedat4> --config <path/to/config.yaml>
-calibrate <calibration_path> [-t <target> --config <args>]
-set-calibration <calibration_path>
+render <path>
+filter <group_or_branch_path> --config <path/to/config.yaml>
+calibrate <path> [-t <target> --config <args>]
+set-calibration <path>
 ```
 
 **Notes:**
 - Session names are user-defined or automatically generated with timestamp suffix.
 - If session not specified, `record` uses current directory
 - Tool auto-detects session root by finding `session.yaml`
+- Group-root paths resolve to the `unfiltered` branch where applicable; filtered branches are addressed explicitly
+- Reconstruction runners use an explicit `--calibration` branch 
 - Run `./build/Debug/sert` without arguments to see full help
 
 ## Filter chains (YAML)
@@ -102,21 +106,23 @@ set-calibration <calibration_path>
   - `ba_then_hot.yaml`
 
 ```bash
-./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config <session>/config/filters/hot_then_ba.yaml
+./sert filter <session>/scenes/<scene> --config <session>/config/filters/hot_then_ba.yaml
 ```
 
 - Or pass any custom yaml path:
 
 ```bash
-./build/Debug/sert filter <session>/scenes/<scene>/raw/stereo_recording.aedat4 --config /tmp/custom_chain.yaml
+./sert filter <session>/scenes/<scene> --config /tmp/custom_chain.yaml
 ```
 
-- Filtered output goes to `<capture>/raw/filtered/` and is named:
-  - `<recording_stem>__<config_stem>.aedat4`
+- Filtering creates a sibling branch named `filtered_<config_stem>/`
+- Each branch keeps its own `raw/`, `intermediate/`, `frames/`, and scene `reconstruction/` outputs
 - Chain order in YAML is the order applied at runtime.
 - Full filter reference (all types + options): `docs/filter_chains.md`
 
 ## Session Structure
+
+Capture groups live under `scenes/` and `calibrations/`; each group contains one baseline `unfiltered/` branch and optional `filtered_<config_stem>/` sibling branches.
 
 ```text
 <session>/
@@ -129,28 +135,54 @@ set-calibration <calibration_path>
 │   │   ├── ba_only.yaml
 │   │   ├── hot_then_ba.yaml
 │   │   └── ba_then_hot.yaml
-│   └── esvo/                               # ESVO configuration
-│       ├── left.yaml                       # Left camera calibration (from camchain)
-│       ├── right.yaml                      # Right camera calibration (from camchain)
-│       ├── mapping.yaml                    # ESVO mapping parameters
-│       ├── tracking.yaml                   # ESVO tracking parameters
-│       └── ts_parameters.yaml              # Time surface parameters
+│   ├── esvo/                                  # ESVO configuration
+│   │   ├── left.yaml                          # Left camera calibration (from camchain)
+│   │   ├── right.yaml                         # Right camera calibration (from camchain)
+│   │   ├── mapping.yaml                       # ESVO mapping parameters
+│   │   ├── tracking.yaml                      # ESVO tracking parameters
+│   │   └── ts_parameters.yaml                 # Time surface parameters
+│   ├── esvo2/                                 # ESVO2 configuration
+│       ├── left.yaml                          # Left camera + IMU calibration (from camchain)
+│       ├── right.yaml                         # Right camera + IMU calibration (from camchain)
+│       ├── mapping.yaml                       # ESVO2 mapping parameters
+│       ├── tracking.yaml                      # ESVO2 tracking parameters
+│       ├── image_representation.yaml          # Instead of Time surface parameters (left)
+│       └── image_representation_right.yaml    # Instead of Time surface parameters (right)
 ├── calibrations/
-│   ├── calib_01/                           # Calibration capture (auto)
-│   │   ├── raw/
-│   │   ├── intermediate/
-│   │   ├── frames/
-│   │   ├── stereo_frames-camchain.yaml     # Kalibr output
-│   │   ├── stereo_frames-report-cam.pdf
-│   │   └── stereo_frames-results-cam.txt
-│   └── test/                               # Custom-named calibration capture
+│   ├── calib_01/                              # Calibration capture group (auto)
+│   │   ├── unfiltered/
+│   │   │   ├── raw/
+│   │   │   ├── intermediate/
+│   │   │   ├── frames/
+│   │   │   ├── stereo_frames-camchain.yaml    # Kalibr output
+│   │   │   ├── stereo_frames-report-cam.pdf
+│   │   │   └── stereo_frames-results-cam.txt
+│   │   └── filtered_hot_then_ba/
+│   │       ├── raw/
+│   │       ├── intermediate/
+│   │       ├── frames/
+│   │       ├── stereo_frames-camchain.yaml
+│   │       ├── stereo_frames-report-cam.pdf
+│   │       └── stereo_frames-results-cam.txt
+│   └── test/                               # Custom-named calibration capture group
 ├── scenes/
-│   ├── scene_2024-01-26_10-30-00/           # Auto-named scene
-│   │   ├── raw/
-│   │   ├── intermediate/
-│   │   ├── frames/
-│   │   └── reconstruction/esvo/
-│   └── scene_desk_test/                    # Custom-named scene
+│   ├── scene_2024-01-26_10-30-00/           # Auto-named scene capture group
+│   │   ├── unfiltered/
+│   │   │   ├── raw/
+│   │   │   ├── intermediate/
+│   │   │   ├── frames/
+│   │   │   └── reconstruction/
+│   │   ├── filtered_hot_only/
+│   │   │   ├── raw/
+│   │   │   ├── intermediate/
+│   │   │   ├── frames/
+│   │   │   └── reconstruction/
+│   │   └── filtered_hot_then_ba/
+│   │       ├── raw/
+│   │       ├── intermediate/
+│   │       ├── frames/
+│   │       └── reconstruction/
+│   └── scene_desk_test/                    # Custom-named scene capture group
 └── logs/                                   # (planned) Session logs
 ```
 

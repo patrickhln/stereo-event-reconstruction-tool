@@ -3,13 +3,15 @@
 ESVO2 calibration includes all ESVO fields plus T_b_c (body/IMU to camera transform).
 
 Usage:
-    python3 camchain_to_esvo2.py /path/to/session/calibrations/<calibration_name>
+    python3 camchain_to_esvo2.py /path/to/calibration/branch/root /path/to/output_dir
 """
 import os
 import argparse
 import yaml
 import numpy as np
 import cv2
+
+from path_utils import require_branch_root, require_raw_dir, require_stereo_camchain_path
 
 def load_camchain(camchain_path):
     with open(camchain_path, "r") as f:
@@ -56,13 +58,13 @@ def read_camera_metadata(raw_dir):
     left_width, left_height = map(int, lines[2].strip().split())
     right_cam = lines[3].strip()
     # right_width, right_height = map(int, lines[4].strip().split())
-    
+
     return left_cam, right_cam, left_width, left_height
 
 def write_esvo2_calib(output_path, camera_name, width, height, K, D, R_rect, P, T_right_left, T_b_c):
     """
     Write ESVO2-format calibration YAML.
-    
+
     Args:
         output_path: Path to output .yaml file
         camera_name: Camera name string
@@ -158,9 +160,9 @@ def load_imu_cam_calibration(camchain):
 def convert_camchain_to_esvo2(camchain_path, raw_dir, output_dir, imu_cam_calib_path=None):
     """
     Convert Kalibr camchain to ESVO2 format.
-    
+
     Args:
-        camchain_path: Path to Kalibr camchain.yaml (stereo calibration)
+        camchain_path: Path to Kalibr stereo_frames-camchain.yaml
         raw_dir: Path to raw directory containing camera_metadata.txt
         output_dir: Output directory for left.yaml and right.yaml
         imu_cam_calib_path: Optional path to Kalibr IMU-cam calibration (camchain-imucam.yaml)
@@ -199,16 +201,16 @@ def convert_camchain_to_esvo2(camchain_path, raw_dir, output_dir, imu_cam_calib_
     R_inv = R.T
     T_inv = -R.T @ T
     T_right_left = np.hstack([R_inv, T_inv])
-    
+
     print(f"T_right_left translation: [{T_right_left[0,3]:.4f}, {T_right_left[1,3]:.4f}, {T_right_left[2,3]:.4f}]")
 
     # Load or generate T_b_c (IMU to camera transform)
     T_b_c = None
     t_b_c_source = None
-    
+
     # First try to load from camchain (in case it's a camchain-imucam.yaml)
     T_b_c, t_b_c_source = load_imu_cam_calibration(camchain)
-    
+
     # If not found in stereo camchain, load from optional IMU-cam calib file
     if T_b_c is None:
         if imu_cam_calib_path and os.path.exists(imu_cam_calib_path):
@@ -245,23 +247,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Convert Kalibr camchain to ESVO2 calibration format"
     )
-    parser.add_argument("calibration_path", help="Path to calibration directory")
+    parser.add_argument("calibration_branch_root", help="Path to calibration branch root")
+    parser.add_argument("output_dir", help="Directory for ESVO2 calibration files")
     args = parser.parse_args()
 
-    calib = os.path.abspath(args.calibration_path)
-    camchain = next((os.path.join(calib, f) for f in ["stereo_frames-camchain.yaml", "camchain.yaml"] if os.path.exists(os.path.join(calib, f))), None)
-    if not camchain:
-        raise FileNotFoundError(f"No camchain.yaml in {calib}")
-
-    # find session root and output 
-    current = calib
-    while current != os.path.dirname(current):
-        if os.path.exists(os.path.join(current, "session.yaml")):
-            output_dir = os.path.join(current, "config", "esvo2")
-            break
-        current = os.path.dirname(current)
-    else:
-        raise FileNotFoundError(f"No session.yaml found above {calib}")
+    calib = require_branch_root(args.calibration_branch_root)
+    camchain = require_stereo_camchain_path(calib)
+    output_dir = os.path.abspath(args.output_dir)
+    raw_dir = require_raw_dir(calib)
 
     camchain_stem, camchain_ext = os.path.splitext(os.path.basename(camchain))
     imu_cam_calib = next(
@@ -276,7 +269,7 @@ def main():
         None,
     )
 
-    convert_camchain_to_esvo2(camchain, os.path.join(calib, "raw"), output_dir, imu_cam_calib)
+    convert_camchain_to_esvo2(camchain, raw_dir, output_dir, imu_cam_calib)
 
 
 if __name__ == "__main__":

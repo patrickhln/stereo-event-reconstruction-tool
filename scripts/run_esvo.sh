@@ -1,8 +1,12 @@
 #!/bin/bash
 set -e
 
-# ESVO Runner Script (Minimal & Local Data)
-# Usage: ./run_esvo.sh <session_path> <scene_name> [OPTIONS]
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+source "$SCRIPT_DIR/lib/path_utils.sh"
+
+# ESVO Runner Script
+# Usage: ./run_esvo.sh <scene_branch_root> <calibration_branch_root> [OPTIONS]
 #
 # Options:
 #   --no-viz        Run without visualization (headless)
@@ -13,8 +17,8 @@ set -e
 #   --gpu <mode>    GPU mode: auto|intel|amd|nvidia|cpu (default: auto)
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 <session_path> <scene_name> [OPTIONS]"
-    echo "Example: $0 ./session scene_test"
+    echo "Usage: $0 <scene_branch_root> <calibration_branch_root> [OPTIONS]"
+    echo "Example: $0 lab/scenes/scene_01/unfiltered lab/calibrations/calib_01/unfiltered"
     echo ""
     echo "Options:"
     echo "  --no-viz      Run without visualization"
@@ -26,22 +30,16 @@ if [[ $# -lt 2 ]]; then
     exit 1
 fi
 
-SESSION_PATH=$(realpath "$1")
-SCENE_ARG="$2"
+SCENE_ARG="$1"
+CALIB_ARG="$2"
 shift 2
 
-# Handle Scene Argument (name or path)
-if [[ -d "$SCENE_ARG" ]]; then
-    SCENE_DIR=$(realpath "$SCENE_ARG")
-elif [[ -d "$SESSION_PATH/scenes/$SCENE_ARG" ]]; then
-    SCENE_DIR="$SESSION_PATH/scenes/$SCENE_ARG"
-else
-    echo "Error: Scene '$SCENE_ARG' not found."
-    exit 1
-fi
+SCENE_DIR=$(require_branch_root "$SCENE_ARG") || exit 1
+SESSION_PATH=$(find_session_root "$SCENE_DIR") || exit 1
+SCENE_DIR=$(require_branch_in_session_subdir "$SCENE_DIR" "$SESSION_PATH" scenes) || exit 1
+CALIB_DIR=$(require_branch_root "$CALIB_ARG") || exit 1
+CALIB_DIR=$(require_branch_in_session_subdir "$CALIB_DIR" "$SESSION_PATH" calibrations) || exit 1
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SRC_PYTHON="$PROJECT_ROOT/src/python"
 ESVO_LAUNCH_FILE="$SCRIPT_DIR/launch/esvo/offline_system.launch"
 ESVO_IMAGE="sert-esvo-kalibr:latest"
@@ -68,9 +66,27 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "=== ESVO Runner ==="
-echo "Session: $SESSION_PATH"
-echo "Scene:   $SCENE_DIR"
-echo "Depth:   ${MIN_DEPTH}m - ${MAX_DEPTH}m"
+echo "Session:      $SESSION_PATH"
+echo "Scene branch: $SCENE_DIR"
+echo "Calibration:  $CALIB_DIR"
+echo "Depth:        ${MIN_DEPTH}m - ${MAX_DEPTH}m"
+
+# Docker sanity checks
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Error: docker command not found."
+    exit 1
+fi
+
+if ! docker image inspect "$ESVO_IMAGE" >/dev/null 2>&1; then
+    echo "Error: Docker image '$ESVO_IMAGE' not found."
+    echo "Build it first with: ./scripts/docker_build_esvo_kalibr.sh"
+    exit 1
+fi
+
+if [[ ! -f "$ESVO_LAUNCH_FILE" ]]; then
+    echo "Error: Launch file not found: $ESVO_LAUNCH_FILE"
+    exit 1
+fi
 
 # try to source conda if available to use sert-python for config generation
 if command -v conda >/dev/null 2>&1; then
@@ -83,6 +99,11 @@ if command -v conda >/dev/null 2>&1; then
 fi
 
 ESVO_CONFIG_DIR="$SESSION_PATH/config/esvo"
+mkdir -p "$ESVO_CONFIG_DIR"
+
+echo "Generating ESVO calibration files (left.yaml, right.yaml)..."
+python3 "$SRC_PYTHON/camchain_to_esvo.py" "$CALIB_DIR" "$ESVO_CONFIG_DIR"
+
 BAG_FILE="$SCENE_DIR/intermediate/scene_events.bag"
 
 if [[ ! -f "$BAG_FILE" ]]; then
@@ -90,6 +111,8 @@ if [[ ! -f "$BAG_FILE" ]]; then
     echo "Please ensure the dataset is processed (aedat4_to_bag) before running ESVO."
     exit 1
 fi
+
+echo "Bag file: $BAG_FILE"
 
 echo "Checking bag for camera_info topics ..."
 if ! docker run --rm \
@@ -99,39 +122,8 @@ if ! docker run --rm \
     echo "Error: ESVO requires /davis/left/camera_info and /davis/right/camera_info in:"
     echo "  $BAG_FILE"
     echo "Regenerate the bag with calibration embedded, for example:"
-    echo "  python3 src/python/aedat4_to_bag.py --path <scene> --calibration <session>/config/esvo"
+    echo "  python3 src/python/aedat4_to_bag.py --path $SCENE_DIR --calibration $ESVO_CONFIG_DIR"
     exit 1
-fi
-
-if [[ ! -f "$ESVO_LAUNCH_FILE" ]]; then
-    echo "Error: Launch file not found: $ESVO_LAUNCH_FILE"
-    exit 1
-fi
-
-mkdir -p "$ESVO_CONFIG_DIR"
-
-# check if calibration files exist, if not, generate them
-if [[ ! -f "$ESVO_CONFIG_DIR/left.yaml" ]] || [[ ! -f "$ESVO_CONFIG_DIR/right.yaml" ]]; then
-    echo "Generating ESVO calibration files (left.yaml, right.yaml)..."
-    
-    # Helper to find camchain (assumes first one found in calibrations folder)
-    CAMCHAIN_FILE=$(find "$SESSION_PATH/calibrations" -name "*camchain.yaml" 2>/dev/null | head -n 1)
-    CAMERA_META="$SCENE_DIR/raw/camera_metadata.txt"
-    
-    if [[ -z "$CAMCHAIN_FILE" ]]; then
-        echo "Error: No camchain file found in $SESSION_PATH/calibrations/"
-        echo "Cannot generate ESVO calibration."
-        exit 1
-    fi
-     if [[ ! -f "$CAMERA_META" ]]; then
-        echo "Error: No camera_metadata.txt found in $SCENE_DIR/raw/"
-        exit 1
-    fi
-    
-    python3 "$SRC_PYTHON/camchain_to_esvo.py" \
-        --camchain "$CAMCHAIN_FILE" \
-        --raw "$(dirname "$CAMERA_META")" \
-        --output "$ESVO_CONFIG_DIR"
 fi
 
 # always regenerate runtime configs so tuning changes in generate_esvo_config.py
@@ -145,6 +137,8 @@ python3 "$SRC_PYTHON/generate_esvo_config.py" \
 
 OUTPUT_DIR="$SCENE_DIR/reconstruction/esvo"
 mkdir -p "$OUTPUT_DIR"
+
+echo "Output dir: $OUTPUT_DIR"
 
 # Official offline behavior: keep time-surface generation at 100 Hz in
 # simulation time and slow only wall-clock playback for weak hardware.
@@ -201,17 +195,6 @@ echo "Playing Bag..."
 rosbag play /data/input.bag --clock -r $PLAYBACK_RATE --delay=2
 
 echo "Bag finished. Terminating..."
-# Kick clock to forward time so nodes can process final bits and exit
-# rostopic pub -r 10 /clock rosgraph_msgs/Clock "clock: {secs: 2147483647, nsecs: 0}" >/dev/null 2>&1 &
-# PID_KICK=\$!
-#
-# rosparam set /ESVO_SYSTEM_STATUS 'TERMINATE'
-# sleep 5
-#
-# kill \$PID_KICK || true
-# [ ! -z "\$PID_PCD" ] && kill \$PID_PCD || true
-# kill \$PID_LAUNCH || true
-# kill \$PID_CORE || true
 
 # Graceful shutdown without forcing a huge /clock jump
 rosparam set /ESVO_SYSTEM_STATUS 'TERMINATE'
@@ -269,17 +252,6 @@ case "$GPU_MODE" in
 esac
 
 echo "Running ESVO in Docker..."
-# docker run --rm -it \
-#     --cpus="$DOCKER_CPUS" \
-#     --memory="8g" \
-#     $VIZ_ARGS \
-#     -v "$ESVO_CONFIG_DIR:/esvo_config:ro" \
-#     -v "$BAG_FILE:/data/input.bag:ro" \
-#     -v "$OUTPUT_DIR:/output" \
-#     -v "$LAUNCH_FILE:/esvo_launch.launch:ro" \
-#     -v "$RUNNER_SCRIPT:/esvo_runner.sh:ro" \
-#     "$ESVO_IMAGE" \
-#     bash /esvo_runner.sh
 
 docker run --rm -it \
     --cpus="$DOCKER_CPUS" \

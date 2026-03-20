@@ -1,28 +1,36 @@
 #!/bin/bash
 
 # wrapper to run Kalibr inside docker
-# usage: ./run_kalibr.sh <session_path> <capture_dir>
+# usage: ./run_kalibr.sh <calibration_branch_root>
+#
+# calibration_branch_root is an explicit branch directory
+# (e.g. lab/calibrations/calib_01/unfiltered) containing raw/, intermediate/,
+# frames/, and where calibration output goes.
 
 set -e
 
-SESSION_PATH="$1"
-CAPTURE_DIR="$2"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/path_utils.sh"
 
-if [ -z "$SESSION_PATH" ] || [ -z "$CAPTURE_DIR" ]; then
-	echo "Usage: $0 <session_path> <capture_dir>"
+BRANCH_ROOT="$1"
+
+if [ -z "$BRANCH_ROOT" ]; then
+	echo "Usage: $0 <calibration_branch_root>"
+	echo "Example: $0 lab/calibrations/calib_01/unfiltered"
 	exit 1
 fi
 
-# relative to absolute path
-SESSION_PATH=$(realpath "$SESSION_PATH")
-CAPTURE_DIR=$(realpath "$CAPTURE_DIR")
+BRANCH_ROOT=$(require_branch_root "$BRANCH_ROOT") || exit 1
+
+SESSION_PATH=$(find_session_root "$BRANCH_ROOT") || exit 1
+BRANCH_ROOT=$(require_branch_in_session_subdir "$BRANCH_ROOT" "$SESSION_PATH" calibrations) || exit 1
 
 # Target config is in session/config/targets/
 CONFIG_PATH="$SESSION_PATH/config/targets"
 
-# Input/output are in the capture directory
-INTERMEDIATE_DIR="$CAPTURE_DIR/intermediate"
-OUTPUT_DIR="$CAPTURE_DIR"
+# Input/output are in the branch directory
+INTERMEDIATE_DIR="$BRANCH_ROOT/intermediate"
+OUTPUT_DIR="$BRANCH_ROOT"
 
 if [ ! -d "$OUTPUT_DIR" ]; then
     mkdir -p "$OUTPUT_DIR"
@@ -44,6 +52,7 @@ if [ -z "$TARGET_FILE" ]; then
 fi
 
 echo "Using target config: $CONFIG_PATH/$TARGET_NAME"
+echo "Branch root: $BRANCH_ROOT"
 echo "Input bag: $INTERMEDIATE_DIR/stereo_frames.bag"
 echo "Output directory: $OUTPUT_DIR"
 
@@ -51,12 +60,12 @@ echo "Output directory: $OUTPUT_DIR"
 USER_ID=$(id -u)
 GROUP_ID=$(id -g)
 
-# Mount session for config and capture for data
+# Mount session for config and branch root for data
 docker run --rm \
 	-e HOME=/tmp \
 	-e MPLBACKEND=Agg \
 	-v "$SESSION_PATH:/session:ro" \
-	-v "$CAPTURE_DIR:/capture" \
+	-v "$BRANCH_ROOT:/capture" \
 	-w /capture \
 	sert-esvo-kalibr:latest \
 	/bin/bash -c "
@@ -67,7 +76,7 @@ docker run --rm \
 		--topics /cam0/image_raw /cam1/image_raw \
 		--approx-sync 0.02 \
 		--dont-show-report || exit 1
-	
+
 	echo 'Moving results...';
     mv /capture/intermediate/stereo_frames-camchain.yaml /capture/ 2>/dev/null || true;
     mv /capture/intermediate/stereo_frames-report-cam.pdf /capture/ 2>/dev/null || true;
@@ -75,7 +84,7 @@ docker run --rm \
 
     echo 'Fixing permissions...';
     chown -R $USER_ID:$GROUP_ID /capture;
-	
+
 	echo 'Done! Calibration results are in: /capture/'
 	"
 

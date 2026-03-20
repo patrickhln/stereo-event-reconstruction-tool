@@ -1,6 +1,7 @@
 #include <atomic>
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <fstream>
 #include <vector>
@@ -37,14 +38,14 @@ int main (int argc, char *argv[])
 	{
 		if (argc < 3)
 		{
-			Log::error("Error: render requires capture path");
+			Log::error("Error: render requires capture path (group root or branch root)");
 			logUsage(argv);
 			return EXIT_FAILURE;
 		}
 
 		try
 		{
-			std::filesystem::path capturePath = std::filesystem::absolute(argv[2]);
+			std::filesystem::path inputPath = std::filesystem::absolute(argv[2]);
 			FrameGen::RenderOptions renderOpts;
 			for (int i = 3; i < argc; ++i)
 			{
@@ -83,26 +84,29 @@ int main (int argc, char *argv[])
 				Log::error("Unknown device: ", renderOpts.device, ". Supported devices: auto, cpu, xpu, cuda.");
 				return EXIT_FAILURE;
 			}
-			if (!std::filesystem::exists(capturePath))
+			if (!std::filesystem::exists(inputPath))
 			{
-				Log::error("Error: Capture path does not exist: ", capturePath.string());
+				Log::error("Error: Path does not exist: ", inputPath.string());
 				return EXIT_FAILURE;
 			}
 
-			Session session = Session::load(Session::findSessionRoot(capturePath));
-			
-			std::filesystem::path rawDir = Session::getRawDir(capturePath);
-			std::filesystem::path intermediateDir = Session::getIntermediateDir(capturePath);
-			std::filesystem::path framesDir = Session::getFramesDir(capturePath);
+			std::filesystem::path branchRoot = Session::resolveBranchRoot(inputPath);
+			Session session = Session::load(Session::findSessionRoot(branchRoot));
+
+			std::filesystem::path rawDir = Session::getRawDir(branchRoot);
+			std::filesystem::path intermediateDir = Session::getIntermediateDir(branchRoot);
+			std::filesystem::path framesDir = Session::getFramesDir(branchRoot);
 
 			if (!std::filesystem::exists(rawDir))
 			{
-				Log::error("Invalid capture: 'raw' directory missing in ", capturePath.string());
+				Log::error("Invalid branch: 'raw' directory missing in ", branchRoot.string());
 				return EXIT_FAILURE;
 			}
 
 			std::filesystem::create_directories(intermediateDir);
 			std::filesystem::create_directories(framesDir);
+
+			Log::info("Rendering branch: ", branchRoot.string());
 
 			FrameGen::CameraMetadata meta = FrameGen::readMetadata(rawDir);
 
@@ -128,10 +132,13 @@ int main (int argc, char *argv[])
 	{
 		if (argc < 3)
 		{
-			Log::error("Error: filter requires an input .aedat4 file");
+			Log::error("Error: filter requires a capture group or branch root path");
 			logUsage(argv);
 			return EXIT_FAILURE;
 		}
+
+		std::filesystem::path createdBranchRoot;
+		bool createdBranch = false;
 
 		try
 		{
@@ -161,27 +168,27 @@ int main (int argc, char *argv[])
 				return EXIT_FAILURE;
 			}
 
-			std::filesystem::path inputAedat4 = argv[2];
-			if (!inputAedat4.is_absolute())
+			// Resolve input path to a branch root
+			std::filesystem::path inputPath = std::filesystem::absolute(argv[2]);
+			if (!std::filesystem::exists(inputPath))
 			{
-				const std::filesystem::path cwdPath = std::filesystem::absolute(inputAedat4);
-				inputAedat4 = std::filesystem::exists(cwdPath) ? cwdPath : (std::filesystem::path(PROJECT_ROOT_DIR) / inputAedat4);
-			}
-			inputAedat4 = inputAedat4.lexically_normal();
-
-			if (!std::filesystem::is_regular_file(inputAedat4) || inputAedat4.extension() != ".aedat4")
-			{
-				Log::error("Error: Input must be an existing .aedat4 file: ", inputAedat4.string());
+				Log::error("Error: Path does not exist: ", inputPath.string());
 				return EXIT_FAILURE;
 			}
 
-			const std::filesystem::path rawDir = inputAedat4.parent_path();
-			std::filesystem::path configPath = std::filesystem::path(configArg);
-			if (!configPath.is_absolute())
+			std::filesystem::path sourceBranch = Session::resolveBranchRoot(inputPath);
+
+			// Only allow filtering from unfiltered branch
+			if (sourceBranch.filename().string() != Session::UNFILTERED_BRANCH)
 			{
-				configPath = std::filesystem::absolute(configPath);
+				Log::error("Error: Filtering currently only derives from the '", Session::UNFILTERED_BRANCH, "' branch.");
+				Log::error("You provided: ", sourceBranch.string());
+				Log::error("Chained filtering (filtered -> filtered) is not supported yet.");
+				return EXIT_FAILURE;
 			}
-			configPath = configPath.lexically_normal();
+
+			// Resolve config path
+			std::filesystem::path configPath = std::filesystem::absolute(configArg);
 			if (configPath.extension() != ".yaml")
 			{
 				Log::error("Error: --config must point to a .yaml file: ", configPath.string());
@@ -193,18 +200,74 @@ int main (int argc, char *argv[])
 				return EXIT_FAILURE;
 			}
 
-			const std::filesystem::path filteredDir = rawDir / "filtered";
-			std::filesystem::create_directories(filteredDir);
-			const std::filesystem::path outputAedat4 = filteredDir /
-				(inputAedat4.stem().string() + "__" + configPath.stem().string() + ".aedat4");
+			// Determine branch name from config stem
+			std::string configStem = configPath.stem().string();
+			std::string newBranchName = Session::filteredBranchName(configStem);
+			std::filesystem::path groupRoot = sourceBranch.parent_path();
+			std::filesystem::path newBranchRoot = groupRoot / newBranchName;
 
+			// Check if branch already exists
+			if (std::filesystem::exists(newBranchRoot))
+			{
+				Log::error("Error: Branch already exists: ", newBranchRoot.string());
+				Log::error("Will not overwrite. Remove it manually or use a different config.");
+				return EXIT_FAILURE;
+			}
+
+			// Determine capture type
+			Session session = Session::load(Session::findSessionRoot(sourceBranch));
+			CaptureType captureType = session.detectCaptureType(sourceBranch);
+
+			// Create new branch directory structure
+			Session::createBranchDirs(newBranchRoot, captureType);
+			createdBranchRoot = newBranchRoot;
+			createdBranch = true;
+			Log::info("Created filtered branch: ", newBranchRoot.string());
+
+			// Source and destination paths
+			std::filesystem::path sourceRaw = Session::getRawDir(sourceBranch);
+			std::filesystem::path destRaw = Session::getRawDir(newBranchRoot);
+			std::filesystem::path inputAedat4 = sourceRaw / "stereo_recording.aedat4";
+			std::filesystem::path outputAedat4 = destRaw / "stereo_recording.aedat4";
+
+			if (!std::filesystem::exists(inputAedat4))
+			{
+				Log::error("Error: Source recording not found: ", inputAedat4.string());
+				// Clean up the created branch
+				std::filesystem::remove_all(newBranchRoot);
+				return EXIT_FAILURE;
+			}
+
+			// Copy camera metadata to new branch
+			std::filesystem::path sourceMetadata = sourceRaw / "camera_metadata.txt";
+			std::filesystem::path destMetadata = destRaw / "camera_metadata.txt";
+			if (std::filesystem::exists(sourceMetadata))
+			{
+				std::filesystem::copy_file(sourceMetadata, destMetadata, std::filesystem::copy_options::overwrite_existing);
+			}
+
+			// Load filter options and run
 			const Aedat4Filter::FilterOptions options = Aedat4Filter::loadFilterOptionsFromYaml(configPath);
+			const Aedat4Filter::StereoCameraNames cameraNames = Aedat4Filter::readStereoCameraNames(sourceRaw);
 
-			const Aedat4Filter::StereoCameraNames cameraNames = Aedat4Filter::readStereoCameraNames(rawDir);
-			return Aedat4Filter::filterStereoRecording(inputAedat4, outputAedat4, cameraNames, options);
+			Log::info("Filtering: ", inputAedat4.string());
+			Log::info("      ->   ", outputAedat4.string());
+
+			int result = Aedat4Filter::filterStereoRecording(inputAedat4, outputAedat4, cameraNames, options);
+			if (result != EXIT_SUCCESS)
+			{
+				Log::error("Filtering failed. Cleaning up branch: ", newBranchRoot.string());
+				std::filesystem::remove_all(newBranchRoot);
+			}
+			return result;
 		}
 		catch (const std::exception &e)
 		{
+			if (createdBranch && !createdBranchRoot.empty() && std::filesystem::exists(createdBranchRoot))
+			{
+				Log::error("Cleaning up incomplete branch: ", createdBranchRoot.string());
+				std::filesystem::remove_all(createdBranchRoot);
+			}
 			Log::error("Error: ", e.what());
 			return EXIT_FAILURE;
 		}
@@ -248,8 +311,9 @@ int main (int argc, char *argv[])
 				   Session::create(sessionPath.parent_path(), sessionPath.filename().string()));
 
 			CaptureType type = (captureType == "calib") ? CaptureType::CALIBRATION : CaptureType::SCENE;
-			std::filesystem::path captureDir = session.createCapture(type, captureName);
-			std::filesystem::path rawDir = Session::getRawDir(captureDir);
+			// createCapture now returns the branch root (group/unfiltered)
+			std::filesystem::path branchRoot = session.createCapture(type, captureName);
+			std::filesystem::path rawDir = Session::getRawDir(branchRoot);
 
 			if (visualize) 
 				Log::info("Visualization enabled.");
@@ -266,7 +330,7 @@ int main (int argc, char *argv[])
 	{
 		if (argc < 3)
 		{
-			Log::error("Error: calibrate requires capture path");
+			Log::error("Error: calibrate requires calibration path (group root or branch root)");
 			logUsage(argv);
 			return EXIT_FAILURE;
 		}
@@ -300,22 +364,25 @@ int main (int argc, char *argv[])
 
 		try
 		{
-			std::filesystem::path capturePath = std::filesystem::absolute(capturePathArg);
-			if (!std::filesystem::exists(capturePath))
+			std::filesystem::path inputPath = std::filesystem::absolute(capturePathArg);
+			if (!std::filesystem::exists(inputPath))
 			{
-				Log::error("Error: Capture path does not exist: ", capturePath.string());
+				Log::error("Error: Path does not exist: ", inputPath.string());
 				return EXIT_FAILURE;
 			}
 
-			Session session = Session::load(Session::findSessionRoot(capturePath));
-			std::string captureName = capturePath.filename().string();
-			
-			std::filesystem::path framesDir = Session::getFramesDir(capturePath);
+			Session session = Session::load(Session::findSessionRoot(inputPath));
+			std::filesystem::path branchRoot = session.resolveCalibrationBranchRoot(inputPath);
+			std::string calibIdentifier = session.resolveCalibrationIdentifier(branchRoot);
+
+			Log::info("Calibrating branch: ", branchRoot.string());
+
+			std::filesystem::path framesDir = Session::getFramesDir(branchRoot);
 			std::filesystem::path configDir = session.getTargetsDir();
 
 			if (!std::filesystem::exists(framesDir))
 			{
-				Log::error("Invalid capture: 'frames' directory missing in ", capturePath.string());
+				Log::error("Invalid branch: 'frames' directory missing in ", branchRoot.string());
 				Log::error("Run 'sert render' first to generate frames.");
 				return EXIT_FAILURE;
 			}
@@ -344,7 +411,6 @@ int main (int argc, char *argv[])
 			}
 
 			std::filesystem::create_directories(configDir);
-			Log::info("Initialized calibration for capture: ", captureName);
 
 			// write target config if provided
 			if (!targetType.empty() && configProvided)
@@ -374,13 +440,13 @@ int main (int argc, char *argv[])
 				}
 			}
 
-			if (Calib::createRosBag(capturePath) != EXIT_SUCCESS)
+			if (Calib::createRosBag(branchRoot) != EXIT_SUCCESS)
 			{
 				Log::error("Failed to create ROS bag for calibration.");
 				return EXIT_FAILURE;
 			}
 
-			if (Calib::run(session, capturePath) != EXIT_SUCCESS)
+			if (Calib::run(branchRoot) != EXIT_SUCCESS)
 			{
 				Log::error("Calibration failed.");
 				return EXIT_FAILURE;
@@ -388,8 +454,23 @@ int main (int argc, char *argv[])
 
 			try
 			{
-				session.setActiveCalibration(captureName);
-				Log::info("Calibration successful! Set '", captureName, "' as active calibration.");
+				if (!session.hasActiveCalibration())
+				{
+					session.setActiveCalibration(calibIdentifier);
+					Log::info("Calibration successful! Set '", calibIdentifier, "' as active calibration.");
+				}
+				else if (session.getActiveCalibration().value() == calibIdentifier)
+				{
+					Log::info("Calibration successful! Active calibration remains '", calibIdentifier, "'.");
+				}
+				else
+				{
+					Log::info(
+						"Calibration successful at '", calibIdentifier,
+						"'. Active calibration remains '", session.getActiveCalibration().value(),
+						"'. Use 'set-calibration' to switch."
+					);
+				}
 			}
 			catch (const std::exception& e)
 			{
@@ -406,22 +487,25 @@ int main (int argc, char *argv[])
 	{
 		if (argc < 3)
 		{
-			Log::error("Error: set-calibration requires calibration path");
+			Log::error("Error: set-calibration requires calibration path (group root or branch root)");
 			logUsage(argv);
 			return EXIT_FAILURE;
 		}
 
 		try
 		{
-			std::filesystem::path calibPath = std::filesystem::absolute(argv[2]);
-			if (!std::filesystem::exists(calibPath))
+			std::filesystem::path inputPath = std::filesystem::absolute(argv[2]);
+			if (!std::filesystem::exists(inputPath))
 			{
-				Log::error("Error: Calibration path does not exist: ", calibPath.string());
+				Log::error("Error: Path does not exist: ", inputPath.string());
 				return EXIT_FAILURE;
 			}
 
-			Session session = Session::load(Session::findSessionRoot(calibPath));
-			session.setActiveCalibration(calibPath.filename().string());
+			Session session = Session::load(Session::findSessionRoot(inputPath));
+			std::string calibIdentifier = session.resolveCalibrationIdentifier(
+				session.resolveCalibrationBranchRoot(inputPath)
+			);
+			session.setActiveCalibration(calibIdentifier);
 		}
 		catch (const std::exception& e)
 		{
@@ -452,38 +536,38 @@ void logUsage(char* argv[])
 		"      -n         Custom capture name (optional)\n",
 		"      -v         Enable live preview (optional)\n\n",
 
-		"  render <capture> [--model <model>] [--device <device>] [-- <e2vid_args...>]\n",
+		"  render <path> [--model <model>] [--device <device>] [-- <e2vid_args...>]\n",
 		"      Generate frames from events.\n",
-		"      <capture>  Path to capture directory\n",
+		"      <path>     Group root or branch root (group root resolves to unfiltered)\n",
 		"      --model    Reconstruction model: e2vid (default), e2vidplus, e2vidplusupdate, firenet\n",
 		"      --device   Device to use: auto (default), cpu, xpu, cuda\n",
-		"      --         Pass remaining args directly to backend scripts\n\n"
+		"      --         Pass remaining args directly to backend scripts\n\n",
 
-		"  filter <recording.aedat4> --config <path/to/config.yaml>\n",
-		"      Apply event filter chain from explicit YAML config path\n",
-		"      Writes output to raw/filtered/<recording>__<config>.aedat4\n\n",
+		"  filter <path> --config <path/to/config.yaml>\n",
+		"      Create a filtered branch from the unfiltered branch\n",
+		"      <path>     Group root or unfiltered branch root\n",
+		"      Creates a sibling branch: filtered_<config_stem>/\n\n",
 
-		"  calibrate <capture> [-t <target> --config <args>]\n",
-		"      Run Kalibr calibration on capture\n",
-		"      <capture>  Path to calibration capture\n",
+		"  calibrate <path> [-t <target> --config <args>]\n",
+		"      Run Kalibr calibration on a calibration branch\n",
+		"      <path>     Calibration group root or branch root\n",
 		"      -t         Target type: aprilgrid, checkerboard, circlegrid\n",
 		"      --config   Target config (required if no existing config):\n",
 		"                   aprilgrid:    <cols> <rows> <tagSize> <tagSpacing>\n",
 		"                   checkerboard: <cols> <rows> <rowSpacing> <colSpacing>\n",
 		"                   circlegrid:   <cols> <rows> <spacing> <asymmetric 0/1>\n\n",
 
-		"  set-calibration <calibration>\n",
+		"  set-calibration <path>\n",
 		"      Set active calibration for session\n",
-		"      <calibration>  Path to calibration directory\n\n",
+		"      <path>     Calibration group root or branch root\n\n",
 
 		"Examples:\n",
-		"  ", cmd, " record -t calib                    # Record calib in current session\n",
-		"  ", cmd, " record lab -t scene -n outdoor     # Create 'lab/' and record scene\n",
-		"  ", cmd, " render lab/calibrations/calib_01   # Generate frames (default settings)\n",
-		"  ", cmd, " render lab/calibrations/calib_01 -- --window_duration 20 --auto_hdr\n",
-		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4 --config lab/config/filters/medium.yaml\n",
-		"  ", cmd, " filter lab/scenes/scene_01/raw/stereo_recording.aedat4 --config ./custom_filters/my_chain.yaml\n",
+		"  ", cmd, " record -t calib                                       # Record calib in current session\n",
+		"  ", cmd, " record lab -t scene -n scene_01                       # Create 'lab/' and record scene\n",
+		"  ", cmd, " render lab/calibrations/calib_01                      # Render unfiltered branch\n",
+		"  ", cmd, " render lab/scenes/scene_01/filtered_hot_only          # Render filtered branch\n",
+		"  ", cmd, " filter lab/scenes/scene_01 --config lab/config/filters/hot_only.yaml\n",
 		"  ", cmd, " calibrate lab/calibrations/calib_01 -t checkerboard --config 8 6 0.068 0.068\n",
-		"  ", cmd, " set-calibration lab/calibrations/calib_01\n"
+		"  ", cmd, " set-calibration lab/calibrations/calib_01/unfiltered\n"
 	);
 }

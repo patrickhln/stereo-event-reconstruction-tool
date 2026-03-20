@@ -470,7 +470,7 @@ def register_dvs_msgs(typestore):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--path", required=True, help="Path to capture directory (contains raw/stereo_recording.aedat4)")
+    parser.add_argument("--path", required=True, help="Path to scene branch root (contains raw/stereo_recording.aedat4)")
     parser.add_argument("--window-ms", type=float, default=1.0, help="Time window for event chunking in ms (default: 1.0 (ESVO))")
     parser.add_argument("--calibration", help="Path to ESVO calibration directory containing left.yaml and right.yaml")
     parser.add_argument("--with-imu", action="store_true", help="Include IMU data in bag (for ESVO2 visual-inertial mode)")

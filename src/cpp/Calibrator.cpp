@@ -4,7 +4,7 @@
 
 namespace Calib
 {
-	int createRosBag(const std::filesystem::path& captureDir)
+	int createRosBag(const std::filesystem::path& branchRoot)
 	{
 		if (FrameGen::environment_installed() != EXIT_SUCCESS)
 		{
@@ -14,7 +14,7 @@ namespace Calib
 		std::filesystem::path stereoFramesToBagScriptPath = std::filesystem::path(PROJECT_ROOT_DIR) / "src" / "python" / "stereo_frames_to_rosbag.py";
 
 		std::string command = "conda run -n sert-python python3 " + stereoFramesToBagScriptPath.string() + " "
-							+ "--path " + captureDir.string();
+							+ "--path " + branchRoot.string();
 
 		Log::info("Executing: ", command);
 
@@ -22,11 +22,10 @@ namespace Calib
 		return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 
-	int run(const Session& session, const std::filesystem::path& captureDir)
+	int run(const std::filesystem::path& branchRoot)
 	{
-		std::string command = std::string(SCRIPTS_DIR) + "run_kalibr.sh \"" 
-							+ session.getPath().string() + "\" \"" 
-							+ captureDir.string() + "\"";
+		std::string command = std::string(SCRIPTS_DIR) + "run_kalibr.sh \""
+							+ branchRoot.string() + "\"";
 		
 		int result = std::system(command.c_str());	
 		int exit_code = 0;
@@ -36,7 +35,7 @@ namespace Calib
 		}
 		if (exit_code == 0) 
 		{
-			Log::info("Kalibr ran successfully! Check the results in: ", captureDir.string());
+			Log::info("Kalibr ran successfully! Check the results in: ", branchRoot.string());
 			return EXIT_SUCCESS;
 		} else if (exit_code == 1) 
 		{

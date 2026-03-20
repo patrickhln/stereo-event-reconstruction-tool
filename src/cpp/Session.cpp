@@ -42,19 +42,25 @@ static void writeFileIfMissing(const std::filesystem::path &path, const std::str
 	file << content;
 }
 
+static bool isWithinDirectory(const std::filesystem::path& child, const std::filesystem::path& parent)
+{
+	std::filesystem::path rel = child.lexically_relative(parent);
+	return !rel.empty() && *rel.begin() != "..";
+}
+
 Session Session::create(const std::filesystem::path& parentPath, const std::string& name)
 {
 	Session session;
-	
+
 	std::string sessionName = name.empty() ? getCurrentTimestamp() : name;
 	session.rootPath_ = parentPath / sessionName;
 	session.name_ = sessionName;
 	session.created_ = getISOTimestamp();
 	session.activeCalibration_ = std::nullopt;
-	
+
 	session.initializeDirectories();
 	session.save();
-	
+
 	Log::info("Created session: ", session.rootPath_.string());
 	return session;
 }
@@ -63,12 +69,12 @@ Session Session::load(const std::filesystem::path& sessionPath)
 {
 	Session session;
 	session.rootPath_ = sessionPath;
-	
+
 	if (!isValidSession(sessionPath))
 	{
 		throw std::runtime_error("Invalid session path: " + sessionPath.string());
 	}
-	
+
 	session.loadConfig();
 	return session;
 }
@@ -84,7 +90,7 @@ std::filesystem::path Session::findSessionRoot(const std::filesystem::path& star
 	std::filesystem::path current = std::filesystem::absolute(startPath);
 	if (std::filesystem::is_regular_file(current))
 		current = current.parent_path();
-	
+
 	while (!current.empty())
 	{
 		if (isValidSession(current))
@@ -148,25 +154,25 @@ hot_pixel:
 void Session::loadConfig()
 {
 	std::filesystem::path configPath = rootPath_ / "session.yaml";
-	
+
 	try
 	{
 		YAML::Node config = YAML::LoadFile(configPath.string());
-		
+
 		name_ = config["name"].as<std::string>("");
 		created_ = config["created"].as<std::string>("");
-		
+
 		if (config["active_calibration"] && !config["active_calibration"].IsNull())
 		{
 			activeCalibration_ = config["active_calibration"].as<std::string>();
 		}
-		
+
 		if (config["cameras"])
 		{
 			leftCamera_ = config["cameras"]["left"].as<std::string>("");
 			rightCamera_ = config["cameras"]["right"].as<std::string>("");
 		}
-		
+
 		notes_ = config["notes"].as<std::string>("");
 	}
 	catch (const YAML::Exception& e)
@@ -181,7 +187,7 @@ void Session::save()
 	out << YAML::BeginMap;
 	out << YAML::Key << "name" << YAML::Value << name_;
 	out << YAML::Key << "created" << YAML::Value << created_;
-	
+
 	if (activeCalibration_.has_value())
 	{
 		out << YAML::Key << "active_calibration" << YAML::Value << activeCalibration_.value();
@@ -190,15 +196,15 @@ void Session::save()
 	{
 		out << YAML::Key << "active_calibration" << YAML::Value << YAML::Null;
 	}
-	
+
 	out << YAML::Key << "cameras" << YAML::Value << YAML::BeginMap;
 	out << YAML::Key << "left" << YAML::Value << leftCamera_;
 	out << YAML::Key << "right" << YAML::Value << rightCamera_;
 	out << YAML::EndMap;
-	
+
 	out << YAML::Key << "notes" << YAML::Value << notes_;
 	out << YAML::EndMap;
-	
+
 	std::filesystem::path configPath = rootPath_ / "session.yaml";
 	std::ofstream fout(configPath);
 	fout << out.c_str();
@@ -209,7 +215,7 @@ std::string Session::nextCalibrationName() const
 {
 	int maxNum = 0;
 	std::regex calibPattern("calib_(\\d+)");
-	
+
 	if (std::filesystem::exists(getCalibrationsDir()))
 	{
 		for (const auto& entry : std::filesystem::directory_iterator(getCalibrationsDir()))
@@ -226,7 +232,7 @@ std::string Session::nextCalibrationName() const
 			}
 		}
 	}
-	
+
 	std::stringstream ss;
 	ss << "calib_" << std::setfill('0') << std::setw(2) << (maxNum + 1);
 	return ss.str();
@@ -237,78 +243,160 @@ std::string Session::generateSceneName() const
 	return "scene_" + getCurrentTimestamp();
 }
 
+// --- Branch-aware helpers ---
+
+std::string Session::filteredBranchName(const std::string& configStem)
+{
+	return "filtered_" + configStem;
+}
+
+bool Session::isBranchRoot(const std::filesystem::path& path)
+{
+	return std::filesystem::exists(path) && std::filesystem::is_directory(path)
+		&& std::filesystem::exists(path / "raw");
+}
+
+bool Session::isGroupRoot(const std::filesystem::path& path)
+{
+	return std::filesystem::exists(path) && std::filesystem::is_directory(path)
+		&& std::filesystem::exists(path / UNFILTERED_BRANCH);
+}
+
+std::filesystem::path Session::resolveBranchRoot(const std::filesystem::path& path)
+{
+	std::filesystem::path absPath = std::filesystem::absolute(path);
+
+	// Already a branch root (has raw/ inside)
+	if (isBranchRoot(absPath))
+	{
+		return absPath;
+	}
+
+	// Group root with unfiltered/ branch
+	if (isGroupRoot(absPath))
+	{
+		std::filesystem::path branchRoot = absPath / UNFILTERED_BRANCH;
+		Log::info("Resolved group root to branch: ", branchRoot.string());
+		return branchRoot;
+	}
+
+	throw std::runtime_error(
+		"Cannot resolve branch root from: " + absPath.string() + "\n"
+		"Expected either a branch root (containing raw/) or a group root (containing unfiltered/)."
+	);
+}
+
+std::filesystem::path Session::resolveBranchRootInSubdir(
+	const std::filesystem::path& path,
+	const std::filesystem::path& subdirRoot,
+	const std::string& kind) const
+{
+	std::filesystem::path branchRoot = std::filesystem::weakly_canonical(resolveBranchRoot(path));
+	std::filesystem::path canonicalSubdirRoot = std::filesystem::weakly_canonical(subdirRoot);
+
+	if (!isWithinDirectory(branchRoot, canonicalSubdirRoot))
+	{
+		throw std::runtime_error("Path is not a " + kind + " branch under this session: " + branchRoot.string());
+	}
+
+	return branchRoot;
+}
+
+std::filesystem::path Session::resolveSceneBranchRoot(const std::filesystem::path& path) const
+{
+	return resolveBranchRootInSubdir(path, getScenesDir(), "scene");
+}
+
+std::filesystem::path Session::resolveCalibrationBranchRoot(const std::filesystem::path& path) const
+{
+	return resolveBranchRootInSubdir(path, getCalibrationsDir(), "calibration");
+}
+
+CaptureType Session::detectCaptureType(const std::filesystem::path& absolutePath) const
+{
+	std::filesystem::path branchRoot = std::filesystem::weakly_canonical(resolveBranchRoot(absolutePath));
+	if (isWithinDirectory(branchRoot, std::filesystem::weakly_canonical(getCalibrationsDir())))
+	{
+		return CaptureType::CALIBRATION;
+	}
+	if (isWithinDirectory(branchRoot, std::filesystem::weakly_canonical(getScenesDir())))
+	{
+		return CaptureType::SCENE;
+	}
+
+	throw std::runtime_error("Cannot determine capture type for: " + branchRoot.string()
+		+ "\nPath must be under calibrations/ or scenes/ within the session.");
+}
+
+void Session::createBranchDirs(const std::filesystem::path& branchRoot, CaptureType type)
+{
+	std::filesystem::create_directories(getRawDir(branchRoot));
+	std::filesystem::create_directories(getIntermediateDir(branchRoot));
+	std::filesystem::create_directories(getFramesDir(branchRoot));
+
+	if (type == CaptureType::SCENE)
+	{
+		std::filesystem::create_directories(getReconstructionDir(branchRoot));
+	}
+}
+
 std::filesystem::path Session::createCapture(CaptureType type, const std::string& name)
 {
-	std::filesystem::path captureDir;
+	std::filesystem::path groupRoot;
 	std::string captureName;
-	
+
 	if (type == CaptureType::CALIBRATION)
 	{
 		captureName = name.empty() ? nextCalibrationName() : name;
-		captureDir = getCalibrationsDir() / captureName;
+		groupRoot = getCalibrationsDir() / captureName;
 	}
 	else
 	{
 		captureName = name.empty() ? generateSceneName() : name;
-		captureDir = getScenesDir() / captureName;
+		groupRoot = getScenesDir() / captureName;
 	}
-	
-	std::filesystem::create_directories(getRawDir(captureDir));
-	std::filesystem::create_directories(getIntermediateDir(captureDir));
-	std::filesystem::create_directories(getFramesDir(captureDir));
-	
-	if (type == CaptureType::SCENE)
-	{
-		// Scenes get a reconstruction folder for 3D methods
-		std::filesystem::create_directories(getReconstructionDir(captureDir));
-	}
-	
-	Log::info("Created capture: ", captureDir.string());
-	return captureDir;
+
+	std::filesystem::path branchRoot = groupRoot / UNFILTERED_BRANCH;
+	createBranchDirs(branchRoot, type);
+
+	Log::info("Created capture group: ", groupRoot.string());
+	Log::info("Created branch: ", branchRoot.string());
+	return branchRoot;
 }
 
-std::filesystem::path Session::getCaptureDir(const std::string& captureName) const
+std::filesystem::path Session::getRawDir(const std::filesystem::path& branchRoot)
 {
-	// Check in calibrations first
-	std::filesystem::path calibPath = getCalibrationsDir() / captureName;
-	if (std::filesystem::exists(calibPath))
-	{
-		return calibPath;
-	}
-	
-	// Then check in scenes
-	std::filesystem::path scenePath = getScenesDir() / captureName;
-	if (std::filesystem::exists(scenePath))
-	{
-		return scenePath;
-	}
-	
-	throw std::runtime_error("Capture not found: " + captureName);
+	return branchRoot / "raw";
 }
 
-std::filesystem::path Session::getRawDir(const std::filesystem::path& captureDir)
+std::filesystem::path Session::getIntermediateDir(const std::filesystem::path& branchRoot)
 {
-	return captureDir / "raw";
+	return branchRoot / "intermediate";
 }
 
-std::filesystem::path Session::getIntermediateDir(const std::filesystem::path& captureDir)
+std::filesystem::path Session::getFramesDir(const std::filesystem::path& branchRoot)
 {
-	return captureDir / "intermediate";
+	return branchRoot / "frames";
 }
 
-std::filesystem::path Session::getFramesDir(const std::filesystem::path& captureDir)
+std::filesystem::path Session::getReconstructionDir(const std::filesystem::path& branchRoot)
 {
-	return captureDir / "frames";
+	return branchRoot / "reconstruction";
 }
 
-std::filesystem::path Session::getReconstructionDir(const std::filesystem::path& captureDir)
+std::filesystem::path Session::getEsvoDir(const std::filesystem::path& branchRoot)
 {
-	return captureDir / "reconstruction";
+	return branchRoot / "reconstruction" / "esvo";
 }
 
-std::filesystem::path Session::getEsvoDir(const std::filesystem::path& captureDir)
+std::filesystem::path Session::getEsvo2Dir(const std::filesystem::path& branchRoot)
 {
-	return captureDir / "reconstruction" / "esvo";
+	return branchRoot / "reconstruction" / "esvo2";
+}
+
+std::filesystem::path Session::getRtabmapDir(const std::filesystem::path& branchRoot)
+{
+	return branchRoot / "reconstruction" / "rtabmap";
 }
 
 std::optional<std::string> Session::getActiveCalibration() const
@@ -316,25 +404,35 @@ std::optional<std::string> Session::getActiveCalibration() const
 	return activeCalibration_;
 }
 
-void Session::setActiveCalibration(const std::string& calibName)
+std::string Session::resolveCalibrationIdentifier(const std::filesystem::path& path) const
 {
-	// Verify the calibration exists and has stereo_frames-camchain.yaml
-	std::filesystem::path calibDir = getCalibrationsDir() / calibName;
-	std::filesystem::path camchainPath = calibDir / "stereo_frames-camchain.yaml";
-	
-	if (!std::filesystem::exists(calibDir))
+	std::filesystem::path branchRoot = resolveCalibrationBranchRoot(path);
+	std::filesystem::path calibrationsDir = std::filesystem::weakly_canonical(getCalibrationsDir());
+	return std::filesystem::relative(branchRoot, calibrationsDir).generic_string();
+}
+
+void Session::setActiveCalibration(const std::string& calibIdentifier)
+{
+	std::filesystem::path calibBranchDir = resolveCalibrationBranchRoot(getCalibrationsDir() / calibIdentifier);
+	std::string canonicalIdentifier = std::filesystem::relative(
+		calibBranchDir,
+		std::filesystem::weakly_canonical(getCalibrationsDir())
+	).generic_string();
+	std::filesystem::path camchainPath = calibBranchDir / "stereo_frames-camchain.yaml";
+
+	if (!std::filesystem::exists(calibBranchDir))
 	{
-		throw std::runtime_error("Calibration does not exist: " + calibName);
+		throw std::runtime_error("Calibration branch does not exist: " + calibBranchDir.string());
 	}
 	if (!std::filesystem::exists(camchainPath))
 	{
-		throw std::runtime_error("Calibration has no stereo_frames-camchain.yaml: " + calibName);
+		throw std::runtime_error("Calibration has no stereo_frames-camchain.yaml: " + calibBranchDir.string());
 	}
-	
-	activeCalibration_ = calibName;
+
+	activeCalibration_ = canonicalIdentifier;
 	save();
-	
-	Log::info("Set active calibration to: ", calibName);
+
+	Log::info("Set active calibration to: ", canonicalIdentifier);
 }
 
 std::filesystem::path Session::getActiveCamchainPath() const
@@ -343,13 +441,17 @@ std::filesystem::path Session::getActiveCamchainPath() const
 	{
 		throw std::runtime_error("No active calibration set");
 	}
-	std::filesystem::path calibDir = getCalibrationsDir() / activeCalibration_.value();
+	std::filesystem::path calibDir = resolveCalibrationBranchRoot(getCalibrationsDir() / activeCalibration_.value());
+	std::string canonicalIdentifier = std::filesystem::relative(
+		calibDir,
+		std::filesystem::weakly_canonical(getCalibrationsDir())
+	).generic_string();
 	std::filesystem::path camchainPath = calibDir / "stereo_frames-camchain.yaml";
 	if (std::filesystem::exists(camchainPath))
 	{
 		return camchainPath;
 	}
-	throw std::runtime_error("Active calibration has no camchain file: " + activeCalibration_.value());
+	throw std::runtime_error("Active calibration has no camchain file: " + canonicalIdentifier);
 }
 
 bool Session::hasActiveCalibration() const

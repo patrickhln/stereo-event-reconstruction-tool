@@ -1,8 +1,14 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/path_utils.sh"
+
 # RTAB-Map Runner (offline stereo frame bag)
-# Usage: ./run_rtabmap.sh <session_path> <scene_name_or_scene_path> [OPTIONS]
+# Usage: ./run_rtabmap.sh <scene_branch_root> [OPTIONS]
+#
+# The scene argument must be an explicit branch root
+# (e.g. lab/scenes/scene_01/unfiltered).
 #
 # Options:
 #   --no-viz        Run without RViz
@@ -10,26 +16,19 @@ set -e
 #   --save-pc       Save final pointcloud to reconstruction folder
 #   --gpu <mode>    GPU mode: auto|intel|amd|nvidia|cpu (default: auto)
 
-if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 <session_path> <scene_name_or_scene_path> [OPTIONS]"
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 <scene_branch_root> [OPTIONS]"
+    echo "Example: $0 lab/scenes/scene_01/unfiltered"
     exit 1
 fi
 
-SESSION_PATH=$(realpath "$1")
-SCENE_ARG="$2"
-shift 2
+SCENE_ARG="$1"
+shift 1
 
-# scene arg can be a name or path
-if [[ -d "$SCENE_ARG" ]]; then
-    SCENE_DIR=$(realpath "$SCENE_ARG")
-elif [[ -d "$SESSION_PATH/scenes/$SCENE_ARG" ]]; then
-    SCENE_DIR="$SESSION_PATH/scenes/$SCENE_ARG"
-else
-    echo "Error: Scene '$SCENE_ARG' not found."
-    exit 1
-fi
+SCENE_DIR=$(require_branch_root "$SCENE_ARG") || exit 1
+SESSION_PATH=$(find_session_root "$SCENE_DIR") || exit 1
+SCENE_DIR=$(require_branch_in_session_subdir "$SCENE_DIR" "$SESSION_PATH" scenes) || exit 1
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RTABMAP_IMAGE="sert-rtabmap:latest"
 RTABMAP_LAUNCH_FILE="$SCRIPT_DIR/launch/rtabmap/offline_stereo.launch"
 
@@ -50,8 +49,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "=== RTAB-Map Runner ==="
-echo "Session: $SESSION_PATH"
-echo "Scene:   $SCENE_DIR"
+echo "Scene branch: $SCENE_DIR"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "Error: docker command not found."
@@ -72,6 +70,8 @@ fi
 BAG_FILE="$SCENE_DIR/intermediate/stereo_frames.bag"
 if [[ ! -f "$BAG_FILE" ]]; then
     echo "Error: Bag file not found: $BAG_FILE"
+    echo "Run stereo_frames_to_rosbag.py first:"
+    echo "  python3 src/python/stereo_frames_to_rosbag.py --path $SCENE_DIR"
     exit 1
 fi
 
@@ -84,7 +84,7 @@ if [[ "$SAVE_PC" == "true" ]]; then
 fi
 rm -f "$OUTPUT_DIR/rtabmap_odom.txt" "$OUTPUT_DIR/rtabmap_slam.txt" "$OUTPUT_DIR/report.csv"
 
-echo "Input bag:      $BAG_FILE"
+echo "Bag file:       $BAG_FILE"
 echo "Output dir:     $OUTPUT_DIR"
 echo "Playback rate:  $PLAYBACK_RATE"
 echo "Visualization:  $VISUALIZE"

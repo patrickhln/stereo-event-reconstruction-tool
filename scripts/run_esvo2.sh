@@ -1,8 +1,12 @@
 #!/bin/bash
 set -e
 
-# ESVO2 Runner Script (Local Data)
-# Usage: ./run_esvo2.sh <session_path> <scene_name> [OPTIONS]
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+source "$SCRIPT_DIR/lib/path_utils.sh"
+
+# ESVO2 Runner Script
+# Usage: ./run_esvo2.sh <scene_branch_root> <calibration_branch_root> [OPTIONS]
 #
 # Options:
 #   --no-viz        Run without visualization (headless)
@@ -14,8 +18,8 @@ set -e
 #   --use-imu       Enable IMU integration (requires bag with /davis/left/imu)
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 <session_path> <scene_name> [OPTIONS]"
-    echo "Example: $0 ./session scene_test"
+    echo "Usage: $0 <scene_branch_root> <calibration_branch_root> [OPTIONS]"
+    echo "Example: $0 lab/scenes/scene_01/unfiltered lab/calibrations/calib_01/unfiltered"
     echo ""
     echo "Options:"
     echo "  --no-viz      Run without visualization"
@@ -28,22 +32,16 @@ if [[ $# -lt 2 ]]; then
     exit 1
 fi
 
-SESSION_PATH=$(realpath "$1")
-SCENE_ARG="$2"
+SCENE_ARG="$1"
+CALIB_ARG="$2"
 shift 2
 
-# Handle scene argument (name or path)
-if [[ -d "$SCENE_ARG" ]]; then
-    SCENE_DIR=$(realpath "$SCENE_ARG")
-elif [[ -d "$SESSION_PATH/scenes/$SCENE_ARG" ]]; then
-    SCENE_DIR="$SESSION_PATH/scenes/$SCENE_ARG"
-else
-    echo "Error: Scene '$SCENE_ARG' not found."
-    exit 1
-fi
+SCENE_DIR=$(require_branch_root "$SCENE_ARG") || exit 1
+SESSION_PATH=$(find_session_root "$SCENE_DIR") || exit 1
+SCENE_DIR=$(require_branch_in_session_subdir "$SCENE_DIR" "$SESSION_PATH" scenes) || exit 1
+CALIB_DIR=$(require_branch_root "$CALIB_ARG") || exit 1
+CALIB_DIR=$(require_branch_in_session_subdir "$CALIB_DIR" "$SESSION_PATH" calibrations) || exit 1
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SRC_PYTHON="$PROJECT_ROOT/src/python"
 ESVO2_IMAGE="sert-esvo2:latest"
 ESVO2_LAUNCH_FILE="$SCRIPT_DIR/launch/esvo2/offline_system.launch"
@@ -71,10 +69,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "=== ESVO2 Runner ==="
-echo "Session: $SESSION_PATH"
-echo "Scene:   $SCENE_DIR"
-echo "Depth:   ${MIN_DEPTH}m - ${MAX_DEPTH}m"
-echo "IMU:     $USE_IMU"
+echo "Session:      $SESSION_PATH"
+echo "Scene branch: $SCENE_DIR"
+echo "Calibration:  $CALIB_DIR"
+echo "Depth:        ${MIN_DEPTH}m - ${MAX_DEPTH}m"
+echo "IMU:          $USE_IMU"
 
 # Docker sanity checks
 if ! command -v docker >/dev/null 2>&1; then
@@ -104,6 +103,11 @@ if command -v conda >/dev/null 2>&1; then
 fi
 
 ESVO2_CONFIG_DIR="$SESSION_PATH/config/esvo2"
+mkdir -p "$ESVO2_CONFIG_DIR"
+
+echo "Generating ESVO2 calibration files (left.yaml, right.yaml)..."
+python3 "$SRC_PYTHON/camchain_to_esvo2.py" "$CALIB_DIR" "$ESVO2_CONFIG_DIR"
+
 BAG_FILE="$SCENE_DIR/intermediate/scene_events.bag"
 
 if [[ ! -f "$BAG_FILE" ]]; then
@@ -111,10 +115,12 @@ if [[ ! -f "$BAG_FILE" ]]; then
     echo "Please ensure the dataset is processed (aedat4_to_bag) before running ESVO2."
     if [[ "$USE_IMU" == "true" ]]; then
         echo "For IMU mode, rerun conversion with:"
-        echo "  python3 src/python/aedat4_to_bag.py --path <scene> --with-imu"
+        echo "  python3 src/python/aedat4_to_bag.py --path $SCENE_DIR --with-imu"
     fi
     exit 1
 fi
+
+echo "Bag file: $BAG_FILE"
 
 echo "Checking bag for camera_info topics /davis/left/camera_info and /davis/right/camera_info ..."
 if ! docker run --rm \
@@ -124,7 +130,7 @@ if ! docker run --rm \
     echo "Error: ESVO2 requires /davis/left/camera_info and /davis/right/camera_info in:"
     echo "  $BAG_FILE"
     echo "Regenerate the bag with calibration embedded, for example:"
-    echo "  python3 src/python/aedat4_to_bag.py --path <scene> --calibration <session>/config/esvo2"
+    echo "  python3 src/python/aedat4_to_bag.py --path $SCENE_DIR --calibration $ESVO2_CONFIG_DIR"
     exit 1
 fi
 
@@ -138,33 +144,12 @@ if [[ "$USE_IMU" == "true" ]]; then
         echo "Error: --use-imu was requested but /davis/left/imu is missing in:"
         echo "  $BAG_FILE"
         echo "Rerun conversion with:"
-        echo "  python3 src/python/aedat4_to_bag.py --path <scene> --with-imu"
+        echo "  python3 src/python/aedat4_to_bag.py --path $SCENE_DIR --with-imu"
         exit 1
     fi
 
     echo "Warning: IMU calibration is still pending (TODO: use ./run_kalibr_imucam.sh)."
     echo "         Visual-inertial accuracy may be limited for now."
-fi
-
-mkdir -p "$ESVO2_CONFIG_DIR"
-
-# Generate calibration files only if missing
-if [[ ! -f "$ESVO2_CONFIG_DIR/left.yaml" ]] || [[ ! -f "$ESVO2_CONFIG_DIR/right.yaml" ]]; then
-    echo "Generating ESVO2 calibration files (left.yaml, right.yaml)..."
-
-    CAMERA_META="$SCENE_DIR/raw/camera_metadata.txt"
-
-    if [[ ! -f "$CAMERA_META" ]]; then
-        echo "Error: No camera_metadata.txt found in $SCENE_DIR/raw/"
-        exit 1
-    fi
-
-    CALIB_ARGS=(
-        "$SESSION_PATH/calibrations"
-        --raw "$(dirname "$CAMERA_META")"
-    )
-
-    python3 "$SRC_PYTHON/camchain_to_esvo2.py" "${CALIB_ARGS[@]}"
 fi
 
 # Always regenerate runtime configs for deterministic behavior
@@ -198,6 +183,8 @@ echo "Image representation rate (sim time): $GENERATION_RATE_HZ"
 OUTPUT_DIR="$SCENE_DIR/reconstruction/esvo2"
 LOGS_DIR="$OUTPUT_DIR/ros_logs"
 mkdir -p "$OUTPUT_DIR"
+
+echo "Output dir: $OUTPUT_DIR"
 
 # Keep logs local to this run and clear previous logs.
 rm -rf "$LOGS_DIR"

@@ -4,6 +4,8 @@ import yaml
 import numpy as np
 import cv2
 
+from path_utils import require_branch_root, require_raw_dir, require_stereo_camchain_path
+
 """
 Kalibr stereo_frames-camchain.yaml example:
 
@@ -75,7 +77,7 @@ def read_camera_metadata(raw_dir):
     left_width, left_height = map(int, lines[2].strip().split())
     right_cam = lines[3].strip()
     # right_width, right_height = map(int, lines[4].strip().split())
-    
+
     return left_cam, right_cam, left_width, left_height
 
 def write_esvo_calib(output_path, camera_name, width, height, K, D, R_rect, P, T_right_left): 
@@ -91,7 +93,7 @@ def write_esvo_calib(output_path, camera_name, width, height, K, D, R_rect, P, T
         R_rect: Rectification rotation (3x3)
         P: Projection matrix (3x4)
         T_right_left: Transform from left to right (3x4) - REQUIRED for BOTH cameras!
-    
+
     Note: ESVO expects T_right_left in BOTH left.yaml and right.yaml (same values)
     """
 
@@ -170,7 +172,7 @@ def convert_camchain_to_esvo(camchain_path, raw_dir, output_dir):
     R_inv = R.T
     T_inv = -R.T @ T
     T_right_left = np.hstack([R_inv, T_inv])
-    
+
     # Verify: T_right_left should have POSITIVE x-translation (baseline)
     # if right camera is to the right of left camera
     print(f"T_right_left translation: [{T_right_left[0,3]:.4f}, {T_right_left[1,3]:.4f}, {T_right_left[2,3]:.4f}]")
@@ -195,25 +197,16 @@ def main():
     parser = argparse.ArgumentParser(
         description="Convert Kalibr camchain to ESVO calibration format"
     )
-    parser.add_argument("calibration_path", help="Path to calibration directory")
+    parser.add_argument("calibration_branch_root", help="Path to calibration branch root")
+    parser.add_argument("output_dir", help="Directory for ESVO calibration files")
     args = parser.parse_args()
-    
-    calib = os.path.abspath(args.calibration_path)
-    camchain = next((os.path.join(calib, f) for f in ["stereo_frames-camchain.yaml", "camchain.yaml"] if os.path.exists(os.path.join(calib, f))), None)
-    if not camchain:
-        raise FileNotFoundError(f"No camchain.yaml in {calib}")
-    
-    # find session root and output
-    current = calib
-    while current != os.path.dirname(current):
-        if os.path.exists(os.path.join(current, "session.yaml")):
-            output = os.path.join(current, "config", "esvo")
-            break
-        current = os.path.dirname(current)
-    else:
-        raise FileNotFoundError(f"No session.yaml found above {calib}")
-    
-    convert_camchain_to_esvo(camchain, os.path.join(calib, "raw"), output)
+
+    calib = require_branch_root(args.calibration_branch_root)
+    camchain = require_stereo_camchain_path(calib)
+    raw_dir = require_raw_dir(calib)
+    output = os.path.abspath(args.output_dir)
+
+    convert_camchain_to_esvo(camchain, raw_dir, output)
 
 
 if __name__ == "__main__":
