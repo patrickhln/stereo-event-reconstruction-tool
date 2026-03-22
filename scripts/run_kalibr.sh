@@ -97,9 +97,9 @@ docker run --rm \
 
 	echo 'Moving results...';
     mkdir -p /capture/calibration/$MODEL;
-    mv /capture/intermediate/stereo_frames-camchain.yaml /capture/calibration/$MODEL/ 2>/dev/null || true;
-    mv /capture/intermediate/stereo_frames-report-cam.pdf /capture/calibration/$MODEL/ 2>/dev/null || true;
-    mv /capture/intermediate/stereo_frames-results-cam.txt /capture/calibration/$MODEL/ 2>/dev/null || true;
+    mv /capture/intermediate/stereo_frames_${MODEL}-camchain.yaml /capture/calibration/$MODEL/stereo_frames-camchain.yaml 2>/dev/null || true;
+    mv /capture/intermediate/stereo_frames_${MODEL}-report-cam.pdf /capture/calibration/$MODEL/stereo_frames-report-cam.pdf 2>/dev/null || true;
+    mv /capture/intermediate/stereo_frames_${MODEL}-results-cam.txt /capture/calibration/$MODEL/stereo_frames-results-cam.txt 2>/dev/null || true;
 
 	echo 'Fixing permissions...';
     chown -R $USER_ID:$GROUP_ID /capture;
