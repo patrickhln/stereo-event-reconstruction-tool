@@ -6,6 +6,7 @@
 # calibration_branch_root is an explicit branch directory
 # (e.g. lab/calibrations/calib_01/unfiltered) containing raw/, intermediate/,
 # frames/, and where calibration output goes.
+# "It is recommended to lower the frequency of the camera streams to around 4 Hz while capturing the calibration data. This reduces redundant information in the dataset and thus lowering the runtime of the calibration."
 
 set -e
 
@@ -60,8 +61,12 @@ echo "Output directory: $OUTPUT_DIR"
 USER_ID=$(id -u)
 GROUP_ID=$(id -g)
 
+xhost +local:root 2>/dev/null || true
+VIZ_ARGS="-e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:rw"
+
 # Mount session for config and branch root for data
 docker run --rm \
+	$VIZ_ARGS \
 	-e HOME=/tmp \
 	-e MPLBACKEND=Agg \
 	-v "$SESSION_PATH:/session:ro" \
@@ -75,7 +80,10 @@ docker run --rm \
 		--models pinhole-radtan pinhole-radtan \
 		--topics /cam0/image_raw /cam1/image_raw \
 		--approx-sync 0.02 \
-		--dont-show-report || exit 1
+		--dont-show-report \
+		--bag-freq 6 \
+		--no-shuffle \
+		--use-blakezisserman || exit 1
 
 	echo 'Moving results...';
     mv /capture/intermediate/stereo_frames-camchain.yaml /capture/ 2>/dev/null || true;
