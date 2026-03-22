@@ -254,12 +254,17 @@ def chunk_events_by_time(recording, window_us=1000):
     
 
     
-def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=None, with_imu=False):
+def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=None, model=None, with_imu=False):
     raw_dir = os.path.join(capture_dir, "raw")
     intermediate_dir = os.path.join(capture_dir, "intermediate")
 
     aedat4_path = os.path.join(raw_dir, "stereo_recording.aedat4")
-    output_path = os.path.join(intermediate_dir, "scene_events.bag")
+    if calib_dir:
+        if not model:
+            raise ValueError("--model is required when --calibration is provided")
+        output_path = os.path.join(intermediate_dir, f"scene_events_with_caminfo_{model}.bag")
+    else:
+        output_path = os.path.join(intermediate_dir, "scene_events.bag")
 
     if not os.path.exists(aedat4_path):
         raise FileNotFoundError(f"Recording not found: {aedat4_path}")
@@ -315,6 +320,11 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
 
     register_dvs_msgs(typestore)
 
+    if calib_dir:
+        print(f"Creating calibrated event bag for model '{model}'", flush=True)
+        print(f"Calibration source: {calib_dir}", flush=True)
+    else:
+        print("Creating generic event bag without embedded camera_info", flush=True)
     print(f"Converting {aedat4_path} to {output_path}", flush=True)
     print(f"Using {window_ms}ms time windows (~{1000/window_ms:.0f} Hz)", flush=True)
         
@@ -473,11 +483,12 @@ def main():
     parser.add_argument("--path", required=True, help="Path to scene branch root (contains raw/stereo_recording.aedat4)")
     parser.add_argument("--window-ms", type=float, default=1.0, help="Time window for event chunking in ms (default: 1.0 (ESVO))")
     parser.add_argument("--calibration", help="Path to ESVO calibration directory containing left.yaml and right.yaml")
+    parser.add_argument("--model", help="Calibration model name used for calibrated bag naming")
     parser.add_argument("--with-imu", action="store_true", help="Include IMU data in bag (for ESVO2 visual-inertial mode)")
 
     args = parser.parse_args()
-    
-    convert_aedat4_to_bag(args.path, args.window_ms, calib_dir=args.calibration, with_imu=args.with_imu)
+
+    convert_aedat4_to_bag(args.path, args.window_ms, calib_dir=args.calibration, model=args.model, with_imu=args.with_imu)
 
 if __name__ == "__main__":
     main()

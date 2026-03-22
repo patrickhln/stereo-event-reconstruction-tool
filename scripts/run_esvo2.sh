@@ -9,6 +9,7 @@ source "$SCRIPT_DIR/lib/path_utils.sh"
 # Usage: ./run_esvo2.sh <scene_branch_root> <calibration_branch_root> [OPTIONS]
 #
 # Options:
+#   --model <m>     Calibration model to load
 #   --no-viz        Run without visualization (headless)
 #   --rate <r>      Bag playback rate (default: 0.2)
 #   --min-depth <m> Minimum expected scene depth in meters (default: 0.5)
@@ -19,9 +20,10 @@ source "$SCRIPT_DIR/lib/path_utils.sh"
 
 if [[ $# -lt 2 ]]; then
     echo "Usage: $0 <scene_branch_root> <calibration_branch_root> [OPTIONS]"
-    echo "Example: $0 lab/scenes/scene_01/unfiltered lab/calibrations/calib_01/unfiltered"
+    echo "Example: $0 lab/scenes/scene_01/unfiltered lab/calibrations/calib_01/unfiltered --model e2vid"
     echo ""
     echo "Options:"
+    echo "  --model <m>   Calibration model to load"
     echo "  --no-viz      Run without visualization"
     echo "  --rate <r>    Bag playback rate (default: 0.2)"
     echo "  --min-depth   Minimum expected scene depth in meters (default: 0.5)"
@@ -54,9 +56,11 @@ MAX_DEPTH=10.0
 SAVE_PC=false
 GPU_MODE=auto
 USE_IMU=false
+MODEL=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --model) MODEL="$2"; shift 2 ;;
         --no-viz) VISUALIZE=false; shift ;;
         --rate) PLAYBACK_RATE="$2"; shift 2 ;;
         --min-depth) MIN_DEPTH="$2"; shift 2 ;;
@@ -68,10 +72,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$MODEL" ]]; then
+    echo "Error: --model is required."
+    exit 1
+fi
+
 echo "=== ESVO2 Runner ==="
 echo "Session:      $SESSION_PATH"
 echo "Scene branch: $SCENE_DIR"
 echo "Calibration:  $CALIB_DIR"
+echo "Calib model:  $MODEL"
 echo "Depth:        ${MIN_DEPTH}m - ${MAX_DEPTH}m"
 echo "IMU:          $USE_IMU"
 
@@ -106,19 +116,20 @@ ESVO2_CONFIG_DIR="$SESSION_PATH/config/esvo2"
 mkdir -p "$ESVO2_CONFIG_DIR"
 
 echo "Generating ESVO2 calibration files (left.yaml, right.yaml)..."
-python3 "$SRC_PYTHON/camchain_to_esvo2.py" "$CALIB_DIR" "$ESVO2_CONFIG_DIR"
+python3 "$SRC_PYTHON/camchain_to_esvo2.py" "$CALIB_DIR" "$ESVO2_CONFIG_DIR" --model "$MODEL"
 
-BAG_FILE="$SCENE_DIR/intermediate/scene_events.bag"
+BAG_FILE="$SCENE_DIR/intermediate/scene_events_with_caminfo_${MODEL}.bag"
 
-if [[ ! -f "$BAG_FILE" ]]; then
-    echo "Error: Bag file not found: $BAG_FILE"
-    echo "Please ensure the dataset is processed (aedat4_to_bag) before running ESVO2."
-    if [[ "$USE_IMU" == "true" ]]; then
-        echo "For IMU mode, rerun conversion with:"
-        echo "  python3 src/python/aedat4_to_bag.py --path $SCENE_DIR --with-imu"
-    fi
-    exit 1
+echo "Regenerating scene event bag with calibration for model '$MODEL'..."
+AEDAT4_ARGS=(
+    --path "$SCENE_DIR"
+    --calibration "$ESVO2_CONFIG_DIR"
+    --model "$MODEL"
+)
+if [[ "$USE_IMU" == "true" ]]; then
+    AEDAT4_ARGS+=(--with-imu)
 fi
+python3 "$SRC_PYTHON/aedat4_to_bag.py" "${AEDAT4_ARGS[@]}"
 
 echo "Bag file: $BAG_FILE"
 
@@ -130,7 +141,7 @@ if ! docker run --rm \
     echo "Error: ESVO2 requires /davis/left/camera_info and /davis/right/camera_info in:"
     echo "  $BAG_FILE"
     echo "Regenerate the bag with calibration embedded, for example:"
-    echo "  python3 src/python/aedat4_to_bag.py --path $SCENE_DIR --calibration $ESVO2_CONFIG_DIR"
+    echo "  python3 src/python/aedat4_to_bag.py --path $SCENE_DIR --calibration $ESVO2_CONFIG_DIR --model $MODEL"
     exit 1
 fi
 
@@ -148,8 +159,12 @@ if [[ "$USE_IMU" == "true" ]]; then
         exit 1
     fi
 
-    echo "Warning: IMU calibration is still pending (TODO: use ./run_kalibr_imucam.sh)."
-    echo "         Visual-inertial accuracy may be limited for now."
+    IMU_CAMCHAIN_FILE="$CALIB_DIR/calibration/$MODEL/stereo_frames-camchain-imucam.yaml"
+    if [[ ! -f "$IMU_CAMCHAIN_FILE" ]]; then
+        echo "WARNING: No dedicated IMU-camera calibration found at: $IMU_CAMCHAIN_FILE"
+        echo "WARNING: EXPLORATORY ABLATION ONLY: --use-imu without IMU-camera calibration risks rotation misalignment and wrong IMU noise/bias parameters."
+        echo "WARNING: Do not treat this as a calibrated visual-inertial result."
+    fi
 fi
 
 # Always regenerate runtime configs for deterministic behavior
