@@ -62,15 +62,15 @@ echo "Checking Graphics Card Vendor (requires \`pciutils\`)..."
 INSTALL_TYPE="cpu"
 E2VID_BRANCH="master"
 
-if command -v lspci &> /dev/null; then
+if command -v nvidia-smi &> /dev/null && nvidia-smi > /dev/null 2>&1; then
+    INSTALL_TYPE="cuda"
+elif command -v lspci &> /dev/null; then
     gpu_info=$(lspci | grep -Ei "vga|3d|display")
-    if echo "$gpu_info" | grep -qi nvidia; then
-        INSTALL_TYPE="cuda"
-    elif echo "$gpu_info" | grep -qi intel; then
+    if echo "$gpu_info" | grep -qi intel; then
         INSTALL_TYPE="xpu"
     fi
 else
-    echo "Warning: 'lspci' command not found. Unable to auto-detect GPU."
+    echo "Warning: no reliable GPU detection method available."
     echo "Assuming CPU-only installation to be safe."
 fi
 
