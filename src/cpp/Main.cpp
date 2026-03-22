@@ -22,6 +22,11 @@ static void signalHandler(int)
 	stopSignal.store(true);
 }
 
+static bool isSupportedModel(const std::string &model)
+{
+	return model == "e2vid" || model == "e2vidplus" || model == "e2vidplusupdate" || model == "firenet";
+}
+
 int main (int argc, char *argv[])
 {
 	if (argc < 2)
@@ -73,7 +78,7 @@ int main (int argc, char *argv[])
 				}
 			}
 
-			if (renderOpts.model != "e2vid" && renderOpts.model != "e2vidplus" && renderOpts.model != "e2vidplusupdate" && renderOpts.model != "firenet")
+			if (!isSupportedModel(renderOpts.model))
 			{
 				Log::error("Unknown model: ", renderOpts.model, ". Supported models: e2vid, e2vidplus, e2vidplusupdate, firenet.");
 				return EXIT_FAILURE;
@@ -107,6 +112,7 @@ int main (int argc, char *argv[])
 			std::filesystem::create_directories(framesDir);
 
 			Log::info("Rendering branch: ", branchRoot.string());
+			Log::info("Rendering model: ", renderOpts.model);
 
 			FrameGen::CameraMetadata meta = FrameGen::readMetadata(rawDir);
 
@@ -336,6 +342,7 @@ int main (int argc, char *argv[])
 		}
 
 		std::string capturePathArg = argv[2];
+		std::string calibrationModel;
 		std::string targetType;
 		int cols = 0, rows = 0;
 		float param3 = 0.0f, param4 = 0.0f;
@@ -344,8 +351,15 @@ int main (int argc, char *argv[])
 		for (int i = 3; i < argc; ++i) 
 		{
 			std::string arg = argv[i];
-			if ((arg == "-t" || arg == "--target") && i + 1 < argc) targetType = argv[++i];
-			if ((arg == "--config") && i + 4 < argc)
+			if ((arg == "-t" || arg == "--target") && i + 1 < argc)
+			{
+				targetType = argv[++i];
+			}
+			else if (arg == "--model" && i + 1 < argc)
+			{
+				calibrationModel = argv[++i];
+			}
+			else if (arg == "--config" && i + 4 < argc)
 			{
 				try 
 				{
@@ -360,6 +374,24 @@ int main (int argc, char *argv[])
 					return EXIT_FAILURE;
 				}
 			}
+			else
+			{
+				Log::error("Unknown calibrate option: ", arg);
+				return EXIT_FAILURE;
+			}
+		}
+
+		if (calibrationModel.empty())
+		{
+			Log::error("Error: calibrate requires --model <model>");
+			logUsage(argv);
+			return EXIT_FAILURE;
+		}
+
+		if (!isSupportedModel(calibrationModel))
+		{
+			Log::error("Unknown model: ", calibrationModel, ". Supported models: e2vid, e2vidplus, e2vidplusupdate, firenet.");
+			return EXIT_FAILURE;
 		}
 
 		try
@@ -376,14 +408,15 @@ int main (int argc, char *argv[])
 			std::string calibIdentifier = session.resolveCalibrationIdentifier(branchRoot);
 
 			Log::info("Calibrating branch: ", branchRoot.string());
+			Log::info("Calibration model: ", calibrationModel);
 
-			std::filesystem::path framesDir = Session::getFramesDir(branchRoot);
+			std::filesystem::path framesDir = Session::getFramesModelDir(branchRoot, calibrationModel);
 			std::filesystem::path configDir = session.getTargetsDir();
 
-			if (!std::filesystem::exists(framesDir))
+			if (!std::filesystem::exists(framesDir / "left") || !std::filesystem::exists(framesDir / "right"))
 			{
-				Log::error("Invalid branch: 'frames' directory missing in ", branchRoot.string());
-				Log::error("Run 'sert render' first to generate frames.");
+				Log::error("Missing rendered frames for model '", calibrationModel, "' in ", framesDir.string());
+				Log::error("Run 'sert render <path> --model ", calibrationModel, "' first.");
 				return EXIT_FAILURE;
 			}
 
@@ -440,13 +473,13 @@ int main (int argc, char *argv[])
 				}
 			}
 
-			if (Calib::createRosBag(branchRoot) != EXIT_SUCCESS)
+			if (Calib::createRosBag(branchRoot, calibrationModel) != EXIT_SUCCESS)
 			{
 				Log::error("Failed to create ROS bag for calibration.");
 				return EXIT_FAILURE;
 			}
 
-			if (Calib::run(branchRoot) != EXIT_SUCCESS)
+			if (Calib::run(branchRoot, calibrationModel) != EXIT_SUCCESS)
 			{
 				Log::error("Calibration failed.");
 				return EXIT_FAILURE;
@@ -456,19 +489,25 @@ int main (int argc, char *argv[])
 			{
 				if (!session.hasActiveCalibration())
 				{
-					session.setActiveCalibration(calibIdentifier);
-					Log::info("Calibration successful! Set '", calibIdentifier, "' as active calibration.");
+					session.setActiveCalibration(calibIdentifier, calibrationModel);
+					Log::info("Calibration successful! Set '", calibIdentifier, "' [model: ", calibrationModel, "] as active calibration.");
 				}
-				else if (session.getActiveCalibration().value() == calibIdentifier)
+				else if (
+					session.getActiveCalibration()->branch == calibIdentifier &&
+					session.getActiveCalibration()->model == calibrationModel
+				)
 				{
-					Log::info("Calibration successful! Active calibration remains '", calibIdentifier, "'.");
+					Log::info("Calibration successful! Active calibration remains '", calibIdentifier, "' [model: ", calibrationModel, "].");
 				}
 				else
 				{
+					const auto activeCalibration = session.getActiveCalibration().value();
 					Log::info(
 						"Calibration successful at '", calibIdentifier,
-						"'. Active calibration remains '", session.getActiveCalibration().value(),
-						"'. Use 'set-calibration' to switch."
+						"' [model: ", calibrationModel,
+						"]. Active calibration remains '", activeCalibration.branch,
+						"' [model: ", activeCalibration.model,
+						"]. Use 'set-calibration --model <model>' to switch."
 					);
 				}
 			}
@@ -494,6 +533,34 @@ int main (int argc, char *argv[])
 
 		try
 		{
+			std::string calibrationModel;
+			for (int i = 3; i < argc; ++i)
+			{
+				std::string arg = argv[i];
+				if (arg == "--model" && i + 1 < argc)
+				{
+					calibrationModel = argv[++i];
+				}
+				else
+				{
+					Log::error("Unknown set-calibration option: ", arg);
+					return EXIT_FAILURE;
+				}
+			}
+
+			if (calibrationModel.empty())
+			{
+				Log::error("Error: set-calibration requires --model <model>");
+				logUsage(argv);
+				return EXIT_FAILURE;
+			}
+
+			if (!isSupportedModel(calibrationModel))
+			{
+				Log::error("Unknown model: ", calibrationModel, ". Supported models: e2vid, e2vidplus, e2vidplusupdate, firenet.");
+				return EXIT_FAILURE;
+			}
+
 			std::filesystem::path inputPath = std::filesystem::absolute(argv[2]);
 			if (!std::filesystem::exists(inputPath))
 			{
@@ -505,7 +572,7 @@ int main (int argc, char *argv[])
 			std::string calibIdentifier = session.resolveCalibrationIdentifier(
 				session.resolveCalibrationBranchRoot(inputPath)
 			);
-			session.setActiveCalibration(calibIdentifier);
+			session.setActiveCalibration(calibIdentifier, calibrationModel);
 		}
 		catch (const std::exception& e)
 		{
@@ -548,16 +615,17 @@ void logUsage(char* argv[])
 		"      <path>     Group root or unfiltered branch root\n",
 		"      Creates a sibling branch: filtered_<config_stem>/\n\n",
 
-		"  calibrate <path> [-t <target> --config <args>]\n",
+		"  calibrate <path> --model <model> [-t <target> --config <args>]\n",
 		"      Run Kalibr calibration on a calibration branch\n",
 		"      <path>     Calibration group root or branch root\n",
+		"      --model    Render model to use: e2vid, e2vidplus, e2vidplusupdate, firenet\n",
 		"      -t         Target type: aprilgrid, checkerboard, circlegrid\n",
 		"      --config   Target config (required if no existing config):\n",
 		"                   aprilgrid:    <cols> <rows> <tagSize> <tagSpacing>\n",
 		"                   checkerboard: <cols> <rows> <rowSpacing> <colSpacing>\n",
 		"                   circlegrid:   <cols> <rows> <spacing> <asymmetric 0/1>\n\n",
 
-		"  set-calibration <path>\n",
+		"  set-calibration <path> --model <model>\n",
 		"      Set active calibration for session\n",
 		"      <path>     Calibration group root or branch root\n\n",
 
@@ -567,7 +635,7 @@ void logUsage(char* argv[])
 		"  ", cmd, " render lab/calibrations/calib_01                      # Render unfiltered branch\n",
 		"  ", cmd, " render lab/scenes/scene_01/filtered_hot_only          # Render filtered branch\n",
 		"  ", cmd, " filter lab/scenes/scene_01 --config lab/config/filters/hot_only.yaml\n",
-		"  ", cmd, " calibrate lab/calibrations/calib_01 -t checkerboard --config 8 6 0.068 0.068\n",
-		"  ", cmd, " set-calibration lab/calibrations/calib_01/unfiltered\n"
+		"  ", cmd, " calibrate lab/calibrations/calib_01 --model e2vid -t checkerboard --config 8 6 0.068 0.068\n",
+		"  ", cmd, " set-calibration lab/calibrations/calib_01/unfiltered --model e2vid\n"
 	);
 }

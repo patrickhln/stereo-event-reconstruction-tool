@@ -3,7 +3,7 @@
 ESVO2 calibration includes all ESVO fields plus T_b_c (body/IMU to camera transform).
 
 Usage:
-    python3 camchain_to_esvo2.py /path/to/calibration/branch/root /path/to/output_dir
+    python3 camchain_to_esvo2.py /path/to/calibration/branch/root /path/to/output_dir --model e2vid
 """
 import os
 import argparse
@@ -11,7 +11,7 @@ import yaml
 import numpy as np
 import cv2
 
-from path_utils import require_branch_root, require_raw_dir, require_stereo_camchain_path
+from path_utils import require_branch_root, require_raw_dir, require_stereo_camchain_path, find_stereo_imucamchain_path
 
 def load_camchain(camchain_path):
     with open(camchain_path, "r") as f:
@@ -220,7 +220,7 @@ def convert_camchain_to_esvo2(camchain_path, raw_dir, output_dir, imu_cam_calib_
     if T_b_c is None:
         T_b_c = get_identity_T_b_c()
         print("Using identity T_b_c (no IMU-camera calibration found)")
-        print("  Note: For proper IMU integration, run Kalibr IMU-camera calibration")
+        print("  Note: For calibrated visual-inertial results, run Kalibr IMU-camera calibration")
     else:
         print(f"Loaded T_b_c from IMU-camera calibration ({t_b_c_source})")
         print(f"  Translation: [{T_b_c[0,3]:.4f}, {T_b_c[1,3]:.4f}, {T_b_c[2,3]:.4f}]")
@@ -249,25 +249,15 @@ def main():
     )
     parser.add_argument("calibration_branch_root", help="Path to calibration branch root")
     parser.add_argument("output_dir", help="Directory for ESVO2 calibration files")
+    parser.add_argument("--model", required=True, help="Calibration model to load from the branch")
     args = parser.parse_args()
 
     calib = require_branch_root(args.calibration_branch_root)
-    camchain = require_stereo_camchain_path(calib)
+    camchain = require_stereo_camchain_path(calib, args.model)
     output_dir = os.path.abspath(args.output_dir)
     raw_dir = require_raw_dir(calib)
 
-    camchain_stem, camchain_ext = os.path.splitext(os.path.basename(camchain))
-    imu_cam_calib = next(
-        (
-            path
-            for path in [
-                os.path.join(calib, f"{camchain_stem}-imucam{camchain_ext}"),
-                os.path.join(calib, "camchain-imucam.yaml"),
-            ]
-            if os.path.exists(path)
-        ),
-        None,
-    )
+    imu_cam_calib = find_stereo_imucamchain_path(calib, args.model)
 
     convert_camchain_to_esvo2(camchain, raw_dir, output_dir, imu_cam_calib)
 

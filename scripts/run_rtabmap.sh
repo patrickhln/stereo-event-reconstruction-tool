@@ -5,20 +5,21 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/path_utils.sh"
 
 # RTAB-Map Runner (offline stereo frame bag)
-# Usage: ./run_rtabmap.sh <scene_branch_root> [OPTIONS]
+# Usage: ./run_rtabmap.sh <scene_branch_root> --model <model> [OPTIONS]
 #
 # The scene argument must be an explicit branch root
 # (e.g. lab/scenes/scene_01/unfiltered).
 #
 # Options:
+#   --model <m>     Render model whose stereo frame bag should be used
 #   --no-viz        Run without RViz
 #   --rate <r>      Bag playback rate (default: 0.2)
 #   --save-pc       Save final pointcloud to reconstruction folder
 #   --gpu <mode>    GPU mode: auto|intel|amd|nvidia|cpu (default: auto)
 
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <scene_branch_root> [OPTIONS]"
-    echo "Example: $0 lab/scenes/scene_01/unfiltered"
+    echo "Usage: $0 <scene_branch_root> --model <model> [OPTIONS]"
+    echo "Example: $0 lab/scenes/scene_01/unfiltered --model e2vid"
     exit 1
 fi
 
@@ -37,9 +38,11 @@ VISUALIZE=true
 PLAYBACK_RATE=0.2
 SAVE_PC=false
 GPU_MODE=auto
+MODEL=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --model) MODEL="$2"; shift 2 ;;
         --no-viz) VISUALIZE=false; shift ;;
         --rate) PLAYBACK_RATE="$2"; shift 2 ;;
         --save-pc) SAVE_PC=true; shift ;;
@@ -48,8 +51,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$MODEL" ]]; then
+    echo "Error: --model is required."
+    exit 1
+fi
+
 echo "=== RTAB-Map Runner ==="
 echo "Scene branch: $SCENE_DIR"
+echo "Frame model:  $MODEL"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "Error: docker command not found."
@@ -67,11 +76,11 @@ if [[ ! -f "$RTABMAP_LAUNCH_FILE" ]]; then
     exit 1
 fi
 
-BAG_FILE="$SCENE_DIR/intermediate/stereo_frames.bag"
+BAG_FILE="$SCENE_DIR/intermediate/stereo_frames_${MODEL}.bag"
 if [[ ! -f "$BAG_FILE" ]]; then
     echo "Error: Bag file not found: $BAG_FILE"
     echo "Run stereo_frames_to_rosbag.py first:"
-    echo "  python3 src/python/stereo_frames_to_rosbag.py --path $SCENE_DIR"
+    echo "  python3 src/python/stereo_frames_to_rosbag.py --path $SCENE_DIR --model $MODEL"
     exit 1
 fi
 

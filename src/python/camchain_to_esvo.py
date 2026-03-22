@@ -199,10 +199,11 @@ def main():
     )
     parser.add_argument("calibration_branch_root", help="Path to calibration branch root")
     parser.add_argument("output_dir", help="Directory for ESVO calibration files")
+    parser.add_argument("--model", required=True, help="Calibration model to load from the branch")
     args = parser.parse_args()
 
     calib = require_branch_root(args.calibration_branch_root)
-    camchain = require_stereo_camchain_path(calib)
+    camchain = require_stereo_camchain_path(calib, args.model)
     raw_dir = require_raw_dir(calib)
     output = os.path.abspath(args.output_dir)
 

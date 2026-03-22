@@ -25,19 +25,42 @@ def require_recording_path(branch_root: str) -> str:
     return recording_path
 
 
-def require_frames_dir(branch_root: str) -> str:
+def require_frames_dir(branch_root: str, model: str) -> str:
     branch_root = require_branch_root(branch_root)
-    frames_dir = os.path.join(branch_root, "frames")
+    frames_dir = os.path.join(branch_root, "frames", model)
     if not os.path.isdir(frames_dir):
-        raise FileNotFoundError(f"Frames directory not found in branch root: {branch_root}")
+        raise FileNotFoundError(f"Frames directory not found for model '{model}': {frames_dir}")
     return frames_dir
 
 
-def require_stereo_camchain_path(branch_root: str) -> str:
+def require_calibration_artifacts_dir(branch_root: str, model: str) -> str:
     branch_root = require_branch_root(branch_root)
-    camchain_path = os.path.join(branch_root, "stereo_frames-camchain.yaml")
+    calibration_dir = os.path.join(branch_root, "calibration", model)
+    if not os.path.isdir(calibration_dir):
+        raise FileNotFoundError(
+            f"Calibration directory not found for model '{model}': {calibration_dir}"
+        )
+    return calibration_dir
+
+
+def require_stereo_camchain_path(branch_root: str, model: str) -> str:
+    camchain_path = os.path.join(
+        require_calibration_artifacts_dir(branch_root, model),
+        "stereo_frames-camchain.yaml",
+    )
     if not os.path.isfile(camchain_path):
         raise FileNotFoundError(
-            f"Calibration branch has no stereo_frames-camchain.yaml: {branch_root}"
+            f"Calibration branch has no stereo_frames-camchain.yaml for model '{model}': {camchain_path}"
         )
     return camchain_path
+
+
+def find_stereo_imucamchain_path(branch_root: str, model: str) -> str | None:
+    branch_root = require_branch_root(branch_root)
+    camchain_path = os.path.join(
+        branch_root,
+        "calibration",
+        model,
+        "stereo_frames-camchain-imucam.yaml",
+    )
+    return camchain_path if os.path.isfile(camchain_path) else None

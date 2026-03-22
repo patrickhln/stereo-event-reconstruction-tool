@@ -137,7 +137,8 @@ namespace FrameGen
 				}
 			}
 			leftOutFile.close();
-			Log::info("Finished processing!\n","Left file has ", leftLineCount, " lines");
+			Log::info("Finished processing!");
+			Log::info("Left file has ", leftLineCount, " lines");
 		}
 		std::filesystem::path rightOutPath = outputDir / "rightEvents.txt";
 		if (!std::filesystem::exists(rightOutPath))
@@ -157,7 +158,8 @@ namespace FrameGen
 				}
 			}
 			rightOutFile.close();
-			Log::info("Finished processing!\n","Right file has ", rightLineCount, " lines");
+			Log::info("Finished processing!");
+			Log::info("Right file has ", rightLineCount, " lines");
 			Log::warn("The files ", leftOutPath, ", and ", rightOutPath, " were created. However they are quiet large. Consider removing them when E2VID finished the frame generation");
 		}
 
@@ -321,13 +323,16 @@ namespace FrameGen
 		return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 	
-	int recordingToVideo(const std::filesystem::path &intermediateDir, const std::filesystem::path &reconstructionDir, const RenderOptions& options)
+	int recordingToVideo(const std::filesystem::path &intermediateDir, const std::filesystem::path &framesRoot, const RenderOptions& options)
 	{
 		std::filesystem::path leftTxt = intermediateDir / "leftEvents.txt";	
 		std::filesystem::path rightTxt = intermediateDir / "rightEvents.txt";	
+		std::filesystem::path modelOutputDir = framesRoot / options.model;
+		std::filesystem::create_directories(modelOutputDir);
 		
 		std::string backendStr = options.model == "e2vid" ? "rpg_e2vid" : "event_cnn_minimal";
 		Log::info("Starting Reconstruction with backend: ", backendStr, " [Model: ", options.model, "]");
+		Log::info("Frame output directory: ", modelOutputDir.string());
 
 		if (options.model == "e2vid" && options.device != "auto")
 		{
@@ -336,12 +341,12 @@ namespace FrameGen
 
 		auto runner = options.model == "e2vid" ? runE2VID : runECNN;
 
-		if (runner(leftTxt, reconstructionDir, "left", options) != EXIT_SUCCESS)
+		if (runner(leftTxt, modelOutputDir, "left", options) != EXIT_SUCCESS)
 		{
 			Log::error(backendStr, " failed for left camera");
 			return EXIT_FAILURE;
 		}
-		if (runner(rightTxt, reconstructionDir, "right", options) != EXIT_SUCCESS)
+		if (runner(rightTxt, modelOutputDir, "right", options) != EXIT_SUCCESS)
 		{
 			Log::error(backendStr, " failed for right camera");
 			return EXIT_FAILURE;

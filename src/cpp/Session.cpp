@@ -164,7 +164,11 @@ void Session::loadConfig()
 
 		if (config["active_calibration"] && !config["active_calibration"].IsNull())
 		{
-			activeCalibration_ = config["active_calibration"].as<std::string>();
+			YAML::Node activeCalibration = config["active_calibration"];
+			activeCalibration_ = ActiveCalibrationSelection{
+				activeCalibration["branch"].as<std::string>(),
+				activeCalibration["model"].as<std::string>()
+			};
 		}
 
 		if (config["cameras"])
@@ -190,7 +194,10 @@ void Session::save()
 
 	if (activeCalibration_.has_value())
 	{
-		out << YAML::Key << "active_calibration" << YAML::Value << activeCalibration_.value();
+		out << YAML::Key << "active_calibration" << YAML::Value << YAML::BeginMap;
+		out << YAML::Key << "branch" << YAML::Value << activeCalibration_->branch;
+		out << YAML::Key << "model" << YAML::Value << activeCalibration_->model;
+		out << YAML::EndMap;
 	}
 	else
 	{
@@ -334,7 +341,11 @@ void Session::createBranchDirs(const std::filesystem::path& branchRoot, CaptureT
 	std::filesystem::create_directories(getIntermediateDir(branchRoot));
 	std::filesystem::create_directories(getFramesDir(branchRoot));
 
-	if (type == CaptureType::SCENE)
+	if (type == CaptureType::CALIBRATION)
+	{
+		std::filesystem::create_directories(getCalibrationArtifactsDir(branchRoot));
+	}
+	else if (type == CaptureType::SCENE)
 	{
 		std::filesystem::create_directories(getReconstructionDir(branchRoot));
 	}
@@ -379,6 +390,51 @@ std::filesystem::path Session::getFramesDir(const std::filesystem::path& branchR
 	return branchRoot / "frames";
 }
 
+std::filesystem::path Session::getFramesModelDir(const std::filesystem::path& branchRoot, const std::string& model)
+{
+	return getFramesDir(branchRoot) / model;
+}
+
+std::filesystem::path Session::getCalibrationArtifactsDir(const std::filesystem::path& branchRoot)
+{
+	return branchRoot / "calibration";
+}
+
+std::filesystem::path Session::getCalibrationModelDir(const std::filesystem::path& branchRoot, const std::string& model)
+{
+	return getCalibrationArtifactsDir(branchRoot) / model;
+}
+
+std::filesystem::path Session::getCalibrationCamchainPath(const std::filesystem::path& branchRoot, const std::string& model)
+{
+	return getCalibrationModelDir(branchRoot, model) / "stereo_frames-camchain.yaml";
+}
+
+std::filesystem::path Session::getCalibrationReportPath(const std::filesystem::path& branchRoot, const std::string& model)
+{
+	return getCalibrationModelDir(branchRoot, model) / "stereo_frames-report-cam.pdf";
+}
+
+std::filesystem::path Session::getCalibrationResultsPath(const std::filesystem::path& branchRoot, const std::string& model)
+{
+	return getCalibrationModelDir(branchRoot, model) / "stereo_frames-results-cam.txt";
+}
+
+std::filesystem::path Session::getCalibrationImuCamchainPath(const std::filesystem::path& branchRoot, const std::string& model)
+{
+	return getCalibrationModelDir(branchRoot, model) / "stereo_frames-camchain-imucam.yaml";
+}
+
+std::filesystem::path Session::getCalibrationImuReportPath(const std::filesystem::path& branchRoot, const std::string& model)
+{
+	return getCalibrationModelDir(branchRoot, model) / "stereo_frames-report-imucam.pdf";
+}
+
+std::filesystem::path Session::getCalibrationImuResultsPath(const std::filesystem::path& branchRoot, const std::string& model)
+{
+	return getCalibrationModelDir(branchRoot, model) / "stereo_frames-results-imucam.txt";
+}
+
 std::filesystem::path Session::getReconstructionDir(const std::filesystem::path& branchRoot)
 {
 	return branchRoot / "reconstruction";
@@ -399,7 +455,7 @@ std::filesystem::path Session::getRtabmapDir(const std::filesystem::path& branch
 	return branchRoot / "reconstruction" / "rtabmap";
 }
 
-std::optional<std::string> Session::getActiveCalibration() const
+std::optional<ActiveCalibrationSelection> Session::getActiveCalibration() const
 {
 	return activeCalibration_;
 }
@@ -411,28 +467,29 @@ std::string Session::resolveCalibrationIdentifier(const std::filesystem::path& p
 	return std::filesystem::relative(branchRoot, calibrationsDir).generic_string();
 }
 
-void Session::setActiveCalibration(const std::string& calibIdentifier)
+void Session::setActiveCalibration(const std::string& calibIdentifier, const std::string& model)
 {
 	std::filesystem::path calibBranchDir = resolveCalibrationBranchRoot(getCalibrationsDir() / calibIdentifier);
 	std::string canonicalIdentifier = std::filesystem::relative(
 		calibBranchDir,
 		std::filesystem::weakly_canonical(getCalibrationsDir())
 	).generic_string();
-	std::filesystem::path camchainPath = calibBranchDir / "stereo_frames-camchain.yaml";
 
 	if (!std::filesystem::exists(calibBranchDir))
 	{
 		throw std::runtime_error("Calibration branch does not exist: " + calibBranchDir.string());
 	}
-	if (!std::filesystem::exists(camchainPath))
+	if (!std::filesystem::exists(getCalibrationCamchainPath(calibBranchDir, model)))
 	{
-		throw std::runtime_error("Calibration has no stereo_frames-camchain.yaml: " + calibBranchDir.string());
+		throw std::runtime_error(
+			"Calibration has no camchain file for model '" + model + "': " + canonicalIdentifier
+		);
 	}
 
-	activeCalibration_ = canonicalIdentifier;
+	activeCalibration_ = ActiveCalibrationSelection{canonicalIdentifier, model};
 	save();
 
-	Log::info("Set active calibration to: ", canonicalIdentifier);
+	Log::info("Set active calibration to: ", canonicalIdentifier, " [model: ", model, "]");
 }
 
 std::filesystem::path Session::getActiveCamchainPath() const
@@ -441,17 +498,19 @@ std::filesystem::path Session::getActiveCamchainPath() const
 	{
 		throw std::runtime_error("No active calibration set");
 	}
-	std::filesystem::path calibDir = resolveCalibrationBranchRoot(getCalibrationsDir() / activeCalibration_.value());
+	std::filesystem::path calibDir = resolveCalibrationBranchRoot(getCalibrationsDir() / activeCalibration_->branch);
 	std::string canonicalIdentifier = std::filesystem::relative(
 		calibDir,
 		std::filesystem::weakly_canonical(getCalibrationsDir())
 	).generic_string();
-	std::filesystem::path camchainPath = calibDir / "stereo_frames-camchain.yaml";
+	std::filesystem::path camchainPath = getCalibrationCamchainPath(calibDir, activeCalibration_->model);
 	if (std::filesystem::exists(camchainPath))
 	{
 		return camchainPath;
 	}
-	throw std::runtime_error("Active calibration has no camchain file: " + canonicalIdentifier);
+	throw std::runtime_error(
+		"Active calibration has no camchain file for model '" + activeCalibration_->model + "': " + canonicalIdentifier
+	);
 }
 
 bool Session::hasActiveCalibration() const

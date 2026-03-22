@@ -9,6 +9,12 @@ enum class CaptureType
 	SCENE
 };
 
+struct ActiveCalibrationSelection
+{
+	std::string branch;
+	std::string model;
+};
+
 class Session
 {
 public:
@@ -58,15 +64,24 @@ public:
 	static std::filesystem::path getRawDir(const std::filesystem::path& branchRoot);
 	static std::filesystem::path getIntermediateDir(const std::filesystem::path& branchRoot);
 	static std::filesystem::path getFramesDir(const std::filesystem::path& branchRoot);
+	static std::filesystem::path getFramesModelDir(const std::filesystem::path& branchRoot, const std::string& model);
+	static std::filesystem::path getCalibrationArtifactsDir(const std::filesystem::path& branchRoot);
+	static std::filesystem::path getCalibrationModelDir(const std::filesystem::path& branchRoot, const std::string& model);
+	static std::filesystem::path getCalibrationCamchainPath(const std::filesystem::path& branchRoot, const std::string& model);
+	static std::filesystem::path getCalibrationReportPath(const std::filesystem::path& branchRoot, const std::string& model);
+	static std::filesystem::path getCalibrationResultsPath(const std::filesystem::path& branchRoot, const std::string& model);
+	static std::filesystem::path getCalibrationImuCamchainPath(const std::filesystem::path& branchRoot, const std::string& model);
+	static std::filesystem::path getCalibrationImuReportPath(const std::filesystem::path& branchRoot, const std::string& model);
+	static std::filesystem::path getCalibrationImuResultsPath(const std::filesystem::path& branchRoot, const std::string& model);
 	static std::filesystem::path getReconstructionDir(const std::filesystem::path& branchRoot);
 	static std::filesystem::path getEsvoDir(const std::filesystem::path& branchRoot);
 	static std::filesystem::path getEsvo2Dir(const std::filesystem::path& branchRoot);
 	static std::filesystem::path getRtabmapDir(const std::filesystem::path& branchRoot);
 
-	// active calibration management (stores "group/branch" format, e.g. "calib_01/unfiltered")
-	std::optional<std::string> getActiveCalibration() const;
+	// active calibration management (stores branch + model selection)
+	std::optional<ActiveCalibrationSelection> getActiveCalibration() const;
 	std::string resolveCalibrationIdentifier(const std::filesystem::path& path) const;
-	void setActiveCalibration(const std::string& calibIdentifier);
+	void setActiveCalibration(const std::string& calibIdentifier, const std::string& model);
 	std::filesystem::path getActiveCamchainPath() const;
 	bool hasActiveCalibration() const;
 
@@ -94,7 +109,7 @@ private:
 	std::filesystem::path rootPath_;
 	std::string name_;
 	std::string created_;
-	std::optional<std::string> activeCalibration_;
+	std::optional<ActiveCalibrationSelection> activeCalibration_;
 	std::string leftCamera_;
 	std::string rightCamera_;
 	std::string notes_;

@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # wrapper to run Kalibr IMU-Camera calibration inside docker
-# usage: ./run_kalibr_imucam.sh <calibration_branch_root>
+# usage: ./run_kalibr_imucam.sh <calibration_branch_root> <model>
 #
 # calibration_branch_root is an explicit branch directory
 # (e.g. lab/calibrations/calib_01/unfiltered) containing raw/, intermediate/,
-# frames/, and the stereo camera calibration output from run_kalibr.sh.
+# frames/<model>/, and the stereo camera calibration output from run_kalibr.sh.
 
 set -e
 
@@ -13,10 +13,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/path_utils.sh"
 
 BRANCH_ROOT="$1"
+MODEL="$2"
 
-if [ -z "$BRANCH_ROOT" ]; then
-	echo "Usage: $0 <calibration_branch_root>"
-	echo "Example: $0 lab/calibrations/calib_01/unfiltered"
+if [ -z "$BRANCH_ROOT" ] || [ -z "$MODEL" ]; then
+	echo "Usage: $0 <calibration_branch_root> <model>"
+	echo "Example: $0 lab/calibrations/calib_01/unfiltered e2vid"
 	exit 1
 fi
 
@@ -30,7 +31,9 @@ CONFIG_PATH="$SESSION_PATH/config/targets"
 
 # Input/output are in the branch directory
 INTERMEDIATE_DIR="$BRANCH_ROOT/intermediate"
-OUTPUT_DIR="$BRANCH_ROOT"
+OUTPUT_DIR="$BRANCH_ROOT/calibration/$MODEL"
+CAMCHAIN_PATH="$OUTPUT_DIR/stereo_frames-camchain.yaml"
+BAG_FILE="$INTERMEDIATE_DIR/stereo_frames_${MODEL}.bag"
 
 if [ ! -d "$OUTPUT_DIR" ]; then
     mkdir -p "$OUTPUT_DIR"
@@ -53,13 +56,22 @@ fi
 
 echo "Using target config: $CONFIG_PATH/$TARGET_NAME"
 echo "Branch root: $BRANCH_ROOT"
-echo "Input bag: $INTERMEDIATE_DIR/stereo_frames.bag"
-echo "Input camchain: $BRANCH_ROOT/stereo_frames-camchain.yaml"
+echo "Model: $MODEL"
+echo "Input bag: $BAG_FILE"
+echo "Input camchain: $CAMCHAIN_PATH"
 echo "Input imu config: $INTERMEDIATE_DIR/imu.yaml"
 echo "Output directory: $OUTPUT_DIR"
 
-if [ ! -f "$BRANCH_ROOT/stereo_frames-camchain.yaml" ]; then
-    echo "Error: Camera calibration (stereo_frames-camchain.yaml) not found. Run run_kalibr.sh first."
+if [ ! -f "$BAG_FILE" ]; then
+    echo "Error: Input bag not found: $BAG_FILE"
+    echo "Run stereo_frames_to_rosbag.py first:"
+    echo "  python3 src/python/stereo_frames_to_rosbag.py --path $BRANCH_ROOT --model $MODEL"
+    exit 1
+fi
+
+if [ ! -f "$CAMCHAIN_PATH" ]; then
+    echo "Error: Camera calibration not found: $CAMCHAIN_PATH"
+    echo "Run run_kalibr.sh first for model '$MODEL'."
     exit 1
 fi
 
@@ -81,19 +93,20 @@ docker run --rm \
 	sert-esvo-kalibr:latest \
 	/bin/bash -c "
 	rosrun kalibr kalibr_calibrate_imu_camera \
-		--bag /capture/intermediate/stereo_frames.bag \
-		--cam /capture/stereo_frames-camchain.yaml \
+		--bag /capture/intermediate/stereo_frames_${MODEL}.bag \
+		--cam /capture/calibration/$MODEL/stereo_frames-camchain.yaml \
 		--imu /capture/intermediate/imu.yaml \
 		--target $TARGET_FILE \
 		--dont-show-report || exit 1
 	
 	echo 'Moving results...';
-    mv /capture/intermediate/stereo_frames-camchain-imucam.yaml /capture/ 2>/dev/null || true;
-    mv /capture/intermediate/stereo_frames-report-imucam.pdf /capture/ 2>/dev/null || true;
-    mv /capture/intermediate/stereo_frames-results-imucam.txt /capture/ 2>/dev/null || true;
+	    mkdir -p /capture/calibration/$MODEL;
+	    mv /capture/intermediate/stereo_frames-camchain-imucam.yaml /capture/calibration/$MODEL/ 2>/dev/null || true;
+	    mv /capture/intermediate/stereo_frames-report-imucam.pdf /capture/calibration/$MODEL/ 2>/dev/null || true;
+	    mv /capture/intermediate/stereo_frames-results-imucam.txt /capture/calibration/$MODEL/ 2>/dev/null || true;
 
     echo 'Fixing permissions...';
     chown -R $USER_ID:$GROUP_ID /capture;
 	
-	echo 'Done! IMU-Camera calibration results are in: /capture/'
+	echo 'Done! IMU-Camera calibration results are in: /capture/calibration/$MODEL/'
 	"

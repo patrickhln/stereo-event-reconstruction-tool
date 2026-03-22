@@ -6,6 +6,8 @@ import yaml
 from rosbags.typesys import Stores, get_typestore
 from rosbags.rosbag1 import Writer
 
+from path_utils import require_branch_root, require_frames_dir
+
 def load_frames_and_timestamps(frames_path):
     if os.path.exists(frames_path):
         frames_path_list = sorted([
@@ -246,14 +248,18 @@ def write_rosbag(output_path, pairs, left_frames_paths, right_frames_paths,
 
 def main():
     parser = argparse.ArgumentParser(description="Convert stereo frames to ROS bag")
-    parser.add_argument("--path", required=True, help="Path to branch root (should contain frames/left and frames/right)")
+    parser.add_argument("--path", required=True, help="Path to branch root")
+    parser.add_argument("--model", required=True, help="Render model whose frames should be converted")
     parser.add_argument("--max_diff_ms", type=float, default=10.0, help="Max timestamp diff for matching timestamps of frames")
     parser.add_argument("--camchain", required=False, default=None, help="Kalibr camchain yaml (optional, adds camera_info)")
 
     args = parser.parse_args()
-    
-    left_frames_path_list, left_timestamps = load_frames_and_timestamps(os.path.join(args.path, "frames", "left"))
-    right_frames_path_list, right_timestamps = load_frames_and_timestamps(os.path.join(args.path, "frames", "right"))
+
+    branch_root = require_branch_root(args.path)
+    frames_dir = require_frames_dir(branch_root, args.model)
+
+    left_frames_path_list, left_timestamps = load_frames_and_timestamps(os.path.join(frames_dir, "left"))
+    right_frames_path_list, right_timestamps = load_frames_and_timestamps(os.path.join(frames_dir, "right"))
 
     pairs = match_stereo_pairs(left_timestamps, right_timestamps, args.max_diff_ms)
 
@@ -267,7 +273,7 @@ def main():
         print("No --camchain provided. Writing image topics only (no camera_info).")
 
     write_rosbag(
-        os.path.join(args.path, "intermediate", "stereo_frames.bag"),
+        os.path.join(branch_root, "intermediate", f"stereo_frames_{args.model}.bag"),
         pairs,
         left_frames_path_list,
         right_frames_path_list,

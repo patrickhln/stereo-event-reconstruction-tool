@@ -22,7 +22,7 @@ namespace FrameGen
 	int convertAedat4ToTxt(const std::filesystem::path& inputAedat4, const std::filesystem::path& outputDir, const std::string& leftCamName, const std::string& rightCamName); 
 	int runE2VID(const std::filesystem::path& eventFile, const std::filesystem::path& outputDir, const std::string& datasetName, const RenderOptions& options);
 	int runECNN(const std::filesystem::path& txtFile, const std::filesystem::path& outputDir, const std::string& datasetName, const RenderOptions& options);
-	int recordingToVideo(const std::filesystem::path& intermediateDir, const std::filesystem::path& reconstructionDir, const RenderOptions& options);
+	int recordingToVideo(const std::filesystem::path& intermediateDir, const std::filesystem::path& framesRoot, const RenderOptions& options);
 	CameraMetadata readMetadata(const std::filesystem::path& directory);
 	
 }

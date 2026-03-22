@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # wrapper to run Kalibr inside docker
-# usage: ./run_kalibr.sh <calibration_branch_root>
+# usage: ./run_kalibr.sh <calibration_branch_root> <model>
 #
 # calibration_branch_root is an explicit branch directory
 # (e.g. lab/calibrations/calib_01/unfiltered) containing raw/, intermediate/,
-# frames/, and where calibration output goes.
+# frames/<model>/, and where calibration output goes.
 # "It is recommended to lower the frequency of the camera streams to around 4 Hz while capturing the calibration data. This reduces redundant information in the dataset and thus lowering the runtime of the calibration."
 
 set -e
@@ -14,10 +14,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/path_utils.sh"
 
 BRANCH_ROOT="$1"
+MODEL="$2"
 
-if [ -z "$BRANCH_ROOT" ]; then
-	echo "Usage: $0 <calibration_branch_root>"
-	echo "Example: $0 lab/calibrations/calib_01/unfiltered"
+if [ -z "$BRANCH_ROOT" ] || [ -z "$MODEL" ]; then
+	echo "Usage: $0 <calibration_branch_root> <model>"
+	echo "Example: $0 lab/calibrations/calib_01/unfiltered e2vid"
 	exit 1
 fi
 
@@ -31,7 +32,8 @@ CONFIG_PATH="$SESSION_PATH/config/targets"
 
 # Input/output are in the branch directory
 INTERMEDIATE_DIR="$BRANCH_ROOT/intermediate"
-OUTPUT_DIR="$BRANCH_ROOT"
+OUTPUT_DIR="$BRANCH_ROOT/calibration/$MODEL"
+BAG_FILE="$INTERMEDIATE_DIR/stereo_frames_${MODEL}.bag"
 
 if [ ! -d "$OUTPUT_DIR" ]; then
     mkdir -p "$OUTPUT_DIR"
@@ -54,8 +56,16 @@ fi
 
 echo "Using target config: $CONFIG_PATH/$TARGET_NAME"
 echo "Branch root: $BRANCH_ROOT"
-echo "Input bag: $INTERMEDIATE_DIR/stereo_frames.bag"
+echo "Model: $MODEL"
+echo "Input bag: $BAG_FILE"
 echo "Output directory: $OUTPUT_DIR"
+
+if [ ! -f "$BAG_FILE" ]; then
+    echo "Error: Input bag not found: $BAG_FILE"
+    echo "Run stereo_frames_to_rosbag.py first:"
+    echo "  python3 src/python/stereo_frames_to_rosbag.py --path $BRANCH_ROOT --model $MODEL"
+    exit 1
+fi
 
 # local user ID and Group ID to fix permissions later
 USER_ID=$(id -u)
@@ -76,7 +86,7 @@ docker run --rm \
 	/bin/bash -c "
 	rosrun kalibr kalibr_calibrate_cameras \
 		--target $TARGET_FILE \
-		--bag /capture/intermediate/stereo_frames.bag \
+		--bag /capture/intermediate/stereo_frames_${MODEL}.bag \
 		--models pinhole-radtan pinhole-radtan \
 		--topics /cam0/image_raw /cam1/image_raw \
 		--approx-sync 0.02 \
@@ -86,14 +96,15 @@ docker run --rm \
 		--use-blakezisserman || exit 1
 
 	echo 'Moving results...';
-    mv /capture/intermediate/stereo_frames-camchain.yaml /capture/ 2>/dev/null || true;
-    mv /capture/intermediate/stereo_frames-report-cam.pdf /capture/ 2>/dev/null || true;
-    mv /capture/intermediate/stereo_frames-results-cam.txt /capture/ 2>/dev/null || true;
+    mkdir -p /capture/calibration/$MODEL;
+    mv /capture/intermediate/stereo_frames-camchain.yaml /capture/calibration/$MODEL/ 2>/dev/null || true;
+    mv /capture/intermediate/stereo_frames-report-cam.pdf /capture/calibration/$MODEL/ 2>/dev/null || true;
+    mv /capture/intermediate/stereo_frames-results-cam.txt /capture/calibration/$MODEL/ 2>/dev/null || true;
 
-    echo 'Fixing permissions...';
+	echo 'Fixing permissions...';
     chown -R $USER_ID:$GROUP_ID /capture;
 
-	echo 'Done! Calibration results are in: /capture/'
+	echo 'Done! Calibration results are in: /capture/calibration/$MODEL/'
 	"
 
 # -e HOME=/tmp: ROS tries to create a cache
