@@ -1,5 +1,6 @@
 import time
 import os
+import struct
 import argparse
 import numpy as np
 import yaml
@@ -129,44 +130,47 @@ def create_imu_msg(imu_sample, typestore):
         linear_acceleration_covariance=measured_cov
     )
 
-def create_event_array_msg(events, timestamp_ns, typestore, width, height):
-    """Create EventArray message from EventStore using numpy for speed."""
-    HeaderMsg = typestore.types["std_msgs/msg/Header"]
-    TimeMsg = typestore.types["builtin_interfaces/msg/Time"]
-    EventMsg = typestore.types["dvs_msgs/msg/Event"]
-    EventArrayMsg = typestore.types["dvs_msgs/msg/EventArray"]
+def serialize_event_array_ros1(events, timestamp_ns, width, height):
+    """Serialize EventArray directly to ROS1 binary format.
 
+    Bypasses per-event Python object creation by going from numpy arrays
+    straight to bytes via a structured dtype. ~100x faster than building
+    rosbags message objects in a loop.
+    """
     secs = int(timestamp_ns // 1e9)
     nsecs = int(timestamp_ns % 1e9)
+    frame_id = b"dvs"
 
-    header = HeaderMsg(
-        seq=0,
-        stamp=TimeMsg(sec=secs, nanosec=nsecs),
-        frame_id="dvs"
-    )
+    events_np = events.numpy()
+    n_events = len(events_np)
 
-    events_np = events.numpy() 
-    
+    # ROS1 Header: uint32 seq, uint32 stamp.sec, uint32 stamp.nsec,
+    #              uint32 frame_id_len, char[] frame_id
+    # Then: uint32 height, uint32 width, uint32 events_count
+    prefix = struct.pack('<IIII', 0, secs, nsecs, len(frame_id)) + frame_id \
+           + struct.pack('<III', height, width, n_events)
+
+    if n_events == 0:
+        return prefix
+
+    # Build events as a packed structured array (13 bytes per event, no padding)
+    # Event: uint16 x, uint16 y, uint32 ts.sec, uint32 ts.nsec, uint8 polarity
+    event_dtype = np.dtype([
+        ('x', '<u2'), ('y', '<u2'),
+        ('sec', '<u4'), ('nsec', '<u4'),
+        ('polarity', 'u1'),
+    ])
+
     ts_us = events_np['timestamp']
-    ev_secs = (ts_us // 1_000_000).astype(np.int32)
-    ev_nsecs = ((ts_us % 1_000_000) * 1000).astype(np.int32)
-    
-    event_list = [
-        EventMsg(
-            x=int(events_np['x'][i]),
-            y=int(events_np['y'][i]),
-            ts=TimeMsg(sec=int(ev_secs[i]), nanosec=int(ev_nsecs[i])),
-            polarity=bool(events_np['polarity'][i])
-        )
-        for i in range(len(events_np))
-    ]
 
-    return EventArrayMsg(
-        header=header,
-        height=height,
-        width=width,
-        events=event_list
-    )
+    event_data = np.empty(n_events, dtype=event_dtype)
+    event_data['x'] = events_np['x']
+    event_data['y'] = events_np['y']
+    event_data['sec'] = (ts_us // 1_000_000).astype(np.uint32)
+    event_data['nsec'] = ((ts_us % 1_000_000) * 1000).astype(np.uint32)
+    event_data['polarity'] = events_np['polarity']
+
+    return prefix + event_data.tobytes()
 
 def chunk_events_by_time(recording, window_us=1000):
     left_reader = recording.getLeftReader()
@@ -418,14 +422,12 @@ def convert_aedat4_to_bag(capture_dir, window_ms=1.0, override=True, calib_dir=N
                 cam_info_count += 1
             
             if left_events is not None and left_events.size() > 0:
-                left_msg = create_event_array_msg(left_events, timestamp_ns, typestore, width, height)
-                left_bytes = typestore.serialize_ros1(left_msg, EVENT_TYPE)
-                bag.write(connection_left, timestamp_ns, bytes(left_bytes))
+                left_bytes = serialize_event_array_ros1(left_events, timestamp_ns, width, height)
+                bag.write(connection_left, timestamp_ns, left_bytes)
 
             if right_events is not None and right_events.size() > 0:
-                right_msg = create_event_array_msg(right_events, timestamp_ns, typestore, width, height)
-                right_bytes = typestore.serialize_ros1(right_msg, EVENT_TYPE)
-                bag.write(connection_right, timestamp_ns, bytes(right_bytes))
+                right_bytes = serialize_event_array_ros1(right_events, timestamp_ns, width, height)
+                bag.write(connection_right, timestamp_ns, right_bytes)
             
             # Write IMU data for this time window
             if imu_conn and imu_data:
