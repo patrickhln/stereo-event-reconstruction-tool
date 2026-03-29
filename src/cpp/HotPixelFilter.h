@@ -18,7 +18,7 @@ namespace HotPixelFilter
 	{
 		bool autoDetect = true;
 		int nHotPixels = -1;
-		double nStdDev = 5.0;
+		double nStdDev = 4.0;
 	};
 
 	struct StereoMasks
