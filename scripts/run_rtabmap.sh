@@ -86,6 +86,8 @@ fi
 
 OUTPUT_DIR="$SCENE_DIR/reconstruction/rtabmap"
 mkdir -p "$OUTPUT_DIR"
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
 rm -f "$OUTPUT_DIR/rtabmap.db"
 if [[ "$SAVE_PC" == "true" ]]; then
     rm -f "$OUTPUT_DIR/pointcloud.pcd"
@@ -173,6 +175,8 @@ if [[ -f /output/rtabmap.db ]]; then
 fi
 
 kill "\$PID_CORE" >/dev/null 2>&1 || true
+
+chown -R $HOST_UID:$HOST_GID /output 2>/dev/null || true
 EOF
 
 chmod +x "$RUNNER_SCRIPT"

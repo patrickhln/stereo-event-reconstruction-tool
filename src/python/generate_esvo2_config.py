@@ -58,7 +58,7 @@ DVX_IMAGE_REPRESENTATION_PRESET = {
     "synchronize_on_external_time": True,
     "use_stereo_cam": True,
     "representation_mode": 2,
-    "decay_ms": 20,
+    "decay_ms": 18,
     "median_blur_kernel_size": 1,
     "blur_size": 7,
     "use_sim_time": True,
@@ -68,10 +68,10 @@ DVX_IMAGE_REPRESENTATION_PRESET = {
 }
 
 DVX_MAPPING_PRESET = {
-    "residual_vis_threshold": 30,
-    "residual_vis_threshold_ln": 30,
-    "stdVar_vis_threshold": 1,
-    "stdVar_vis_threshold_ln": 1,
+    "residual_vis_threshold": 18,
+    "residual_vis_threshold_ln": 18,
+    "stdVar_vis_threshold": 0.22,
+    "stdVar_vis_threshold_ln": 0.22,
     "age_max_range": 10,
     "age_vis_threshold": 1,
     "patch_size_X": 15,
@@ -79,15 +79,15 @@ DVX_MAPPING_PRESET = {
     "patch_size_X_2": 5,
     "patch_size_Y_2": 31,
     "BM_half_slice_thickness": 0.001,
-    "BM_step": 3,
-    "BM_ZNCC_Threshold": 0.2,
+    "BM_step": 1,
+    "BM_ZNCC_Threshold": 0.22,
     "BM_bUpDownConfiguration": False,
-    "distance_from_last_frame": 0.20,
+    "distance_from_last_frame": 0.05,
     "SmoothTimeSurface": True,
-    "fusion_radius": 2,
+    "fusion_radius": 1,
     "FUSION_STRATEGY": "CONST_FRAMES",
-    "maxNumFusionFrames": 5,
-    "maxNumFusionFrames_ln": 5,
+    "maxNumFusionFrames": 3,
+    "maxNumFusionFrames_ln": 3,
     "maxNumFusionPoints": 20000,
     "LSnorm": "Tdist",
     "Tdist_nu": 2.182,
@@ -98,8 +98,8 @@ DVX_MAPPING_PRESET = {
     "Tdist_scale_ln": 17.277,
     "Tdist_stdvar_ln": 59.763,
     "Denoising": False,
-    "PROCESS_EVENT_NUM": 10000, 
-    "PROCESS_EVENT_NUM_AA": 10000, 
+    "PROCESS_EVENT_NUM": 7000,
+    "PROCESS_EVENT_NUM_AA": 7000,
     "x_patches": 8,
     "y_patches": 6,
     "select_points_from_AA": True,
@@ -111,11 +111,11 @@ DVX_MAPPING_PRESET = {
     "bVisualizeGlobalPC": True,
     "visualizeGPC_interval": 0.5,
     "NumGPC_added_per_refresh": 10000,
-    "visualize_range": 30,
+    "visualize_range": 6,
     "TS_HISTORY_LENGTH": 100,
     "INIT_SGM_DP_NUM_THRESHOLD": 500,
     "mapping_rate_hz": 20,
-    "large_scale": True,
+    "large_scale": False,
 }
 
 DVX_TRACKING_PRESET = {
@@ -125,12 +125,12 @@ DVX_TRACKING_PRESET = {
     "patch_size_X": 1,
     "patch_size_Y": 1,
     "kernelSize": 5,
-    "MAX_REGISTRATION_POINTS": 2000,
-    "BATCH_SIZE": 300,
-    "MAX_ITERATION": 10,
+    "MAX_REGISTRATION_POINTS": 3500,
+    "BATCH_SIZE": 450,
+    "MAX_ITERATION": 15,
     "LSnorm": "Huber",
-    "huber_threshold": 50,
-    "MIN_NUM_EVENTS": 1000,
+    "huber_threshold": 22,
+    "MIN_NUM_EVENTS": 1500,
     "RegProblemType": 1,
     "SAVE_TRAJECTORY": True,
     "VISUALIZE_TRAJECTORY": True,
@@ -151,9 +151,16 @@ def compute_baseline(right_calib):
     return np.linalg.norm(translation)
 
 def compute_focal_length(left_calib):
-    K = np.array(left_calib["camera_matrix"]["data"]).reshape(3, 3)
-    fx = K[0, 0]
-    fy = K[1, 1]
+    """Return rectified focal length from the projection matrix P.
+
+    ESVO2 undistorts and rectifies events before stereo matching, so the
+    disparity search bounds must use P's focal length — not the unrectified
+    camera matrix K.  Using K overestimates the focal length (and thus the
+    maximum disparity) by the amount that rectification narrows the FoV.
+    """
+    P = np.array(left_calib["projection_matrix"]["data"]).reshape(3, 4)
+    fx = P[0, 0]
+    fy = P[1, 1]
     return (fx + fy) / 2
 
 def is_dvx_profile(width):

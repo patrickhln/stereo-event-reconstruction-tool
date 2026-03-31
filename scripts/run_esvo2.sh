@@ -198,6 +198,8 @@ echo "Image representation rate (sim time): $GENERATION_RATE_HZ"
 OUTPUT_DIR="$SCENE_DIR/reconstruction/esvo2"
 LOGS_DIR="$OUTPUT_DIR/ros_logs"
 mkdir -p "$OUTPUT_DIR"
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
 
 echo "Output dir: $OUTPUT_DIR"
 
@@ -275,6 +277,8 @@ if [ "$SAVE_PC" = "true" ]; then
     echo "Saving final pointcloud..."
     python3 -c "import glob, os, shutil; files = sorted(glob.glob('/output/pcd_tmp/*.pcd'), key=os.path.getmtime); shutil.copy(files[-1], '/output/pointcloud.pcd') if files else print('No PCD found')"
 fi
+
+chown -R $HOST_UID:$HOST_GID /output 2>/dev/null || true
 EOF
 
 chmod +x "$RUNNER_SCRIPT"

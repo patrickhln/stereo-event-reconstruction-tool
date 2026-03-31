@@ -144,6 +144,8 @@ python3 "$SRC_PYTHON/generate_esvo_config.py" \
 
 OUTPUT_DIR="$SCENE_DIR/reconstruction/esvo"
 mkdir -p "$OUTPUT_DIR"
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
 
 echo "Output dir: $OUTPUT_DIR"
 
@@ -218,6 +220,8 @@ if [ "$SAVE_PC" = "true" ]; then
 files = sorted(glob.glob('/output/pcd_tmp/*.pcd'), key=os.path.getmtime); 
 shutil.copy(files[-1], '/output/pointcloud.pcd') if files else print('No PCD found')"
 fi
+
+chown -R $HOST_UID:$HOST_GID /output 2>/dev/null || true
 EOF
 
 chmod +x "$RUNNER_SCRIPT"

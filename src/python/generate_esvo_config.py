@@ -40,13 +40,13 @@ import numpy as np
 #     - ESVO2/esvo2_core/cfg/tracking/tracking_dvx_AA_mapping.yaml
 
 DVX_SHARED_MAPPING_PRESET = {
-    "residual_vis_threshold": 30, 
-    "stdVar_vis_threshold": 1,
+    "residual_vis_threshold": 18,
+    "stdVar_vis_threshold": 0.22,
     "age_max_range": 10,
     "age_vis_threshold": 1,
-    "fusion_radius": 2,
+    "fusion_radius": 1,
     "FUSION_STRATEGY": "CONST_FRAMES",
-    "maxNumFusionFrames": 5,
+    "maxNumFusionFrames": 3,
     "maxNumFusionPoints": 20000,
     "Denoising": False,
     "SmoothTimeSurface": True,
@@ -54,8 +54,8 @@ DVX_SHARED_MAPPING_PRESET = {
     "bVisualizeGlobalPC": True,
     "visualizeGPC_interval": 0.5,
     "NumGPC_added_oper_refresh": 10000,
-    "visualize_range": 30,
-    "PROCESS_EVENT_NUM": 10000,
+    "visualize_range": 6,
+    "PROCESS_EVENT_NUM": 7000,
     "TS_HISTORY_LENGTH": 100,
     "INIT_SGM_DP_NUM_THRESHOLD": 500,
     "mapping_rate_hz": 20,
@@ -66,8 +66,8 @@ DVX_SHARED_MAPPING_PRESET = {
     "Tdist_scale": 17.277,
     "Tdist_stdvar": 59.763,
     "BM_half_slice_thickness": 0.001,
-    "BM_step": 3,
-    "BM_ZNCC_Threshold": 0.2,
+    "BM_step": 1,
+    "BM_ZNCC_Threshold": 0.22,
     "BM_bUpDownConfiguration": False,
 }
 
@@ -78,12 +78,12 @@ DVX_SHARED_TRACKING_PRESET = {
     "patch_size_X": 1,
     "patch_size_Y": 1,
     "kernelSize": 5,
-    "MAX_REGISTRATION_POINTS": 2000,
-    "BATCH_SIZE": 300,
-    "MAX_ITERATION": 10,
+    "MAX_REGISTRATION_POINTS": 3500,
+    "BATCH_SIZE": 450,
+    "MAX_ITERATION": 15,
     "LSnorm": "Huber",
-    "huber_threshold": 50,
-    "MIN_NUM_EVENTS": 1000,
+    "huber_threshold": 22,
+    "MIN_NUM_EVENTS": 1500,
     "RegProblemType": 1,
     "SAVE_TRAJECTORY": True,
     "SEQUENCE_NAME": "reconstruction",
@@ -95,7 +95,7 @@ DVX_TS_PRESET = {
     "use_sim_time": True,
     "ignore_polarity": True,
     "time_surface_mode": 0,
-    "decay_ms": 20,
+    "decay_ms": 18,
     "median_blur_kernel_size": 1,
     "max_event_queue_len": 20,
 }
@@ -160,9 +160,16 @@ def compute_baseline(right_calib):
     return np.linalg.norm(translation)
 
 def compute_focal_length(left_calib):
-    K = np.array(left_calib["camera_matrix"]["data"]).reshape(3, 3)
-    fx = K[0, 0]
-    fy = K[1, 1]
+    """Return rectified focal length from the projection matrix P.
+
+    ESVO undistorts and rectifies events before stereo matching, so the
+    disparity search bounds must use P's focal length — not the unrectified
+    camera matrix K.  Using K overestimates the focal length (and thus the
+    maximum disparity) by the amount that rectification narrows the FoV.
+    """
+    P = np.array(left_calib["projection_matrix"]["data"]).reshape(3, 4)
+    fx = P[0, 0]
+    fy = P[1, 1]
     return (fx + fy) / 2
 
 def generate_mapping_config(output_path, width, height, baseline, focal_length, min_depth=0.5, max_depth=10.0):
